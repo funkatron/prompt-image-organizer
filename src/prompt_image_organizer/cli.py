@@ -22,7 +22,7 @@ def print_help() -> None:
 Prompt Image Organizer
 
 Usage:
-  python3 -m prompt_image_organizer [SRC_DIR] [DST_DIR] [options]
+  prompt-image-organizer [SRC_DIR] [DST_DIR] [options]
 
 Arguments:
   SRC_DIR           Source image directory (default: $SRC_DIR or current dir)
@@ -37,9 +37,9 @@ Options:
   -h, --help        Show this help message
 
 Examples:
-  python3 -m prompt_image_organizer ./imgs ./out --gap 45 --workers 12
-  python3 -m prompt_image_organizer ./imgs ./out --sim 0.9 --limit 100 -x
-  python3 -m prompt_image_organizer -h
+  prompt-image-organizer ./imgs ./out --gap 45 --workers 12
+  prompt-image-organizer ./imgs ./out --sim 0.9 --limit 100 -x
+  prompt-image-organizer -h
 """)
 
 
