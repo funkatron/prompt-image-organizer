@@ -13,7 +13,7 @@ This is a Python project for organizing AI-generated images by their prompts and
 ### Dependencies
 - **Core Dependencies**:
   - tqdm >= 4.67.1 (for progress bars)
-- **Development Dependencies**: Add as needed for testing, linting, etc.
+- **Development Dependencies**: black, flake8, mypy, pytest, coverage, etc.
 
 ## Code Style & Standards
 
@@ -36,35 +36,28 @@ This is a Python project for organizing AI-generated images by their prompts and
 ### Current Structure
 ```
 prompt-image-organizer/
-├── main.py              # Entry point
-├── pyproject.toml       # Project configuration
-├── README.md           # Project documentation
-├── sessions/           # Session data (if any)
-├── uv.lock            # Dependency lock file
-└── prompt_image_organizer.egg-info/  # Build artifacts
-```
-
-### Recommended Additions
-```
-prompt-image-organizer/
 ├── src/
 │   └── prompt_image_organizer/
 │       ├── __init__.py
-│       ├── core/
-│       ├── utils/
-│       └── cli/
+│       ├── __main__.py
+│       ├── core.py
+│       └── cli.py
 ├── tests/
-├── docs/
 ├── examples/
-└── scripts/
+├── pyproject.toml
+├── README.md
+├── RULES.md
+├── uv.lock
+└── .gitignore
 ```
 
 ## Development Workflow
 
 ### Before Starting
 1. Ensure you're using Python 3.12+
-2. Activate the virtual environment: `uv venv`
+2. Create and activate the virtual environment: `uv venv`
 3. Install dependencies: `uv sync`
+4. Install the package in development mode: `uv pip install -e .`
 
 ### Code Changes
 1. **One Change at a Time**: Make one logical change per commit
@@ -77,6 +70,13 @@ prompt-image-organizer/
 - **Integration Tests**: Test image processing workflows
 - **Test Output**: Place test outputs outside project root to avoid clutter
 - **Test Coverage**: Aim for >80% coverage
+- **Run tests**: `uv run python -m unittest discover tests -v` or `uv run pytest tests/`
+
+### CLI Usage
+- **Entry Point**: Use the installed CLI command:
+  - `uv run prompt-image-organizer --help`
+  - Or after install: `prompt-image-organizer --help`
+- **Module Style**: `uv run python -m prompt_image_organizer --help` also works
 
 ## Image Processing Rules
 

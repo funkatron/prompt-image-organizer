@@ -20,38 +20,52 @@ This tool helps you organize AI-generated images (like those from Draw Things, S
 
 ## Installation
 
+### Development Setup
+
 ```bash
 # Clone the repository
 git clone <repository-url>
 cd prompt-image-organizer
 
-# Install dependencies
+# Install dependencies with uv
 uv sync
+
+# Install package in development mode
+uv pip install -e .
+```
+
+### From PyPI (when published)
+
+```bash
+pip install prompt-image-organizer
 ```
 
 ## Usage
 
-### Basic usage
+### Command Line Interface
 
 ```bash
 # Preview what would be organized (dry run)
-python prompt-image-organizer.py ./source-images ./session-folders
+uv run prompt-image-organizer ./source-images ./session-folders
 
 # Actually organize the images into session folders
-python prompt-image-organizer.py ./source-images ./session-folders -x
+uv run prompt-image-organizer ./source-images ./session-folders -x
+
+# Or if installed globally
+prompt-image-organizer ./source-images ./session-folders -x
 ```
 
 ### Advanced options
 
 ```bash
 # Custom time gap (45 minutes) and similarity threshold (0.9)
-python prompt-image-organizer.py ./imgs ./out --gap 45 --sim 0.9 -x
+uv run prompt-image-organizer ./imgs ./out --gap 45 --sim 0.9 -x
 
 # Limit cluster size to 100 images per session folder
-python prompt-image-organizer.py ./imgs ./out --limit 100 -x
+uv run prompt-image-organizer ./imgs ./out --limit 100 -x
 
 # Use more worker threads for faster processing
-python prompt-image-organizer.py ./imgs ./out --workers 12 -x
+uv run prompt-image-organizer ./imgs ./out --workers 12 -x
 ```
 
 ### Environment variables
@@ -66,7 +80,40 @@ export PROMPT_SIMILARITY=0.8
 export SESSION_CLUSTER_LIMIT=100
 export SESSION_WORKERS=8
 
-python prompt-image-organizer.py
+uv run prompt-image-organizer -x
+```
+
+### Python API
+
+```python
+from prompt_image_organizer import (
+    scan_files,
+    group_by_time,
+    cluster_prompts,
+    process_clusters,
+    print_summary
+)
+from datetime import timedelta
+
+# Scan files
+file_data = scan_files("./images")
+
+# Group by time (60 minute gaps)
+batches = group_by_time(file_data, timedelta(minutes=60))
+
+# Process with custom config
+config = {
+    "src_dir": "./images",
+    "dst_dir": "./sessions",
+    "gap": timedelta(minutes=60),
+    "sim_thresh": 0.8,
+    "cluster_size_limit": None,
+    "dry_run": True,
+    "workers": 8
+}
+
+session_count, total_files, move_errors = process_clusters(batches, config)
+print_summary(session_count, total_files, move_errors, config["dry_run"])
 ```
 
 ## Configuration
@@ -95,6 +142,14 @@ session_YYYYMMDD_HHMM_prompt-name/
 
 Example: `session_20241201_1430_a-cat-sitting-on-a-chair/`
 
+## File naming conventions
+
+The tool expects image files with prompts in the filename. It extracts the prompt by removing numbering suffixes:
+
+- `my_prompt_1.png` → prompt: `my_prompt`
+- `another_prompt_2.jpg` → prompt: `another_prompt`
+- `complex_prompt_with_spaces_3.webp` → prompt: `complex_prompt_with_spaces`
+
 ## Requirements
 
 - Python 3.12+
@@ -105,20 +160,27 @@ Example: `session_20241201_1430_a-cat-sitting-on-a-chair/`
 ### Running Tests
 
 ```bash
-# Run all tests
-python run_tests.py
+# Run all tests with unittest
+uv run python -m unittest discover tests -v
+
+# Run tests with pytest (if installed)
+uv run pytest tests/ -v
 
 # Run tests with coverage
-python run_tests.py --coverage
+uv run pytest --cov=src/prompt_image_organizer tests/
+```
 
-# Create test data
-python run_tests.py --create-test-data
+### Code Quality
 
-# Using pytest directly
-pytest tests/
+```bash
+# Format code with Black
+uv run black src/ tests/
 
-# Using pytest with coverage
-pytest --cov=group_images tests/
+# Lint with Flake8
+uv run flake8 src/ tests/
+
+# Type checking with mypy
+uv run mypy src/
 ```
 
 ### Test Structure
@@ -140,6 +202,21 @@ The test suite covers:
 - ✅ Error handling (invalid inputs, permission errors)
 - ✅ Edge cases (empty directories, no images)
 - ✅ Full workflow (dry run and actual file movement)
+
+## Project Structure
+
+```
+prompt-image-organizer/
+├── src/prompt_image_organizer/
+│   ├── __init__.py          # Package entry point
+│   ├── __main__.py          # CLI entry point for python -m
+│   ├── core.py              # Core functionality
+│   └── cli.py               # Command-line interface
+├── tests/                   # Test suite
+├── examples/                # Usage examples
+├── pyproject.toml          # Project configuration
+└── README.md               # This file
+```
 
 ## License
 
