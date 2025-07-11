@@ -92,3 +92,8 @@ exclude = [
     ".eggs",
     "*.egg",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.4.1",
+]
