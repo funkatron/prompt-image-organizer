@@ -238,50 +238,75 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
     total_files = 0
     move_errors = 0
 
-    for batch in batches:
+    # Calculate total files across all batches for progress tracking
+    total_files_to_process = sum(len(cluster) for batch in batches
+                                for cluster in cluster_prompts(batch, threshold=config["sim_thresh"], cluster_size_limit=config["cluster_size_limit"]))
+
+    # Initialize total progress bar if tqdm is available
+    if tqdm and total_files_to_process > 2:
+        total_bar = tqdm(
+            total=total_files_to_process, 
+            desc="Processing files" if not config["dry_run"] else "Previewing files", 
+            ncols=120,  # Wider progress bar
+            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} files [{elapsed}<{remaining}, {rate_fmt}]',
+            dynamic_ncols=True  # Allow dynamic resizing
+        )
+    else:
+        total_bar = None
+
+    for batch_idx, batch in enumerate(batches):
         clusters = cluster_prompts(
             batch,
             threshold=config["sim_thresh"],
             cluster_size_limit=config["cluster_size_limit"]
         )
-        for cluster in clusters:
+        
+        for cluster_idx, cluster in enumerate(clusters):
             first_file, mtime, prompt = cluster[0]
             date_str = mtime.strftime('%Y%m%d_%H%M')
             base_folder_name = f"session_{date_str}_{sanitize_for_folder(prompt)}"
             folder_name = find_unique_folder_name(config["dst_dir"], base_folder_name)
             session_folder = os.path.join(config["dst_dir"], folder_name)
 
-            print(f"\nSession {session_count+1}: {session_folder}")
+            # Print session info if debug mode is enabled
+            if config.get("debug", False):
+                print(f"\nSession {session_count+1}: {session_folder}")
+            
             file_ops = []
             for f, _, _ in cluster:
                 src = os.path.join(config["src_dir"], f)
                 dst = os.path.join(session_folder, f)
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
+            
             results = []
-
-            if tqdm and len(file_ops) > 2:
-                bar = tqdm(total=len(file_ops), desc="Moving" if not config["dry_run"] else "Preview", ncols=80)
-            else:
-                bar = None
 
             with ThreadPoolExecutor(max_workers=config["workers"]) as executor:
                 futures = [executor.submit(move_file_worker, *op) for op in file_ops]
+                
                 for fut in as_completed(futures):
                     src, dst, success, err = fut.result()
                     results.append((src, dst, success, err))
-                    if bar: bar.update(1)
+                    if total_bar:
+                        total_bar.update(1)
+                        # Update description to show current file being processed
+                        filename = os.path.basename(src)
+                        # Show more of the filename for better visibility
+                        display_name = filename[:40] + "..." if len(filename) > 40 else filename
+                        total_bar.set_postfix(file=display_name)
                     if not success:
                         move_errors += 1
+                        # Always print errors
                         print(f"    ERROR: Could not move {src} to {dst}: {err}")
-            if bar: bar.close()
 
-            # Log each operation (so output appears in order for small clusters)
-            if not tqdm or len(file_ops) <= 2:
+            # Log each operation if debug mode is enabled
+            if config.get("debug", False):
                 for src, dst, success, err in results:
                     print(f"  {'MOVE' if not config['dry_run'] else 'WOULD MOVE'} {src} -> {dst}")
 
             session_count += 1
             total_files += len(cluster)
+
+    if total_bar: total_bar.close()
     return session_count, total_files, move_errors
 
 

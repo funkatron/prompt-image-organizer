@@ -33,6 +33,7 @@ Options:
   --sim F           Prompt similarity threshold [0-1, env: PROMPT_SIMILARITY, default: 0.8]
   --limit N         Maximum cluster (session) size [env: SESSION_CLUSTER_LIMIT, default: unlimited]
   --workers N       Number of concurrent file moves (default: 8)
+  --debug           Enable verbose logging (shows session details and file operations)
   -x                Actually move files (default: dry run)
   -h, --help        Show this help message
 
@@ -56,6 +57,7 @@ def parse_config() -> Dict[str, Any]:
     parser.add_argument('--sim', type=float, help="Prompt similarity threshold (default 0.8)")
     parser.add_argument('--limit', type=int, help="Maximum session (cluster) size (default: unlimited)")
     parser.add_argument('--workers', type=int, help="Number of concurrent file moves (default: 8)")
+    parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
     parser.add_argument('-x', action='store_true', help="Actually move files")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
     args = parser.parse_args()
@@ -71,6 +73,7 @@ def parse_config() -> Dict[str, Any]:
     cluster_size_limit = args.limit if args.limit is not None else get_env_int("SESSION_CLUSTER_LIMIT", 0) or None
     dry_run = not args.x
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
+    debug = args.debug
     return {
         "src_dir": src_dir,
         "dst_dir": dst_dir,
@@ -78,7 +81,8 @@ def parse_config() -> Dict[str, Any]:
         "sim_thresh": sim_thresh,
         "cluster_size_limit": cluster_size_limit,
         "dry_run": dry_run,
-        "workers": workers
+        "workers": workers,
+        "debug": debug
     }
 
 

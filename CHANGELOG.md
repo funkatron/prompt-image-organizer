@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+- **Progress bar now tracks total progress** across all clusters instead of per-cluster progress
+- Improved user experience with single progress bar showing overall file processing status
+- **Clean progress bar display** - verbose logging only shown when `--debug` flag is enabled
+- **Enhanced progress bar updates** - shows session details, current file being processed, and batch progress
+- **Improved progress bar visibility** - wider bar (120 cols), better formatting, longer filename display
+- **Simplified progress bar** - focuses on visible per-file progress updates with clear "files" labeling
+
+### Added
+- **`--debug` flag** to enable verbose logging of session details and file operations
+
 ### Added
 - GitHub repository setup
 - Comprehensive documentation updates
