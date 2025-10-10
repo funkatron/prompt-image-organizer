@@ -15,7 +15,7 @@ This tool helps you organize AI-generated images (like those from Draw Things, S
 - **Smart clustering**: Groups images by prompt similarity and time gaps into session folders
 - **Flexible configuration**: Adjustable time gaps and similarity thresholds
 - **Safe operations**: Dry-run mode to preview changes before making them
-- **Progress tracking**: Visual progress bars for long operations
+- **Progress tracking**: Visual progress bars showing per-file progress
 - **Concurrent processing**: Multi-threaded file operations for speed
 
 ## Installation
@@ -66,6 +66,9 @@ uv run prompt-image-organizer ./imgs ./out --limit 100 -x
 
 # Use more worker threads for faster processing
 uv run prompt-image-organizer ./imgs ./out --workers 12 -x
+
+# Enable debug mode to see detailed session and file operation logs
+uv run prompt-image-organizer ./imgs ./out --debug -x
 ```
 
 ### Environment variables
@@ -122,6 +125,7 @@ print_summary(session_count, total_files, move_errors, config["dry_run"])
 - **`--sim F`**: Prompt similarity threshold 0-1 (default: 0.8)
 - **`--limit N`**: Maximum images per session folder (default: unlimited)
 - **`--workers N`**: Number of concurrent file operations (default: 8)
+- **`--debug`**: Enable verbose logging of session details and file operations
 - **`-x`**: Actually move files (default: dry run)
 
 ## How it works

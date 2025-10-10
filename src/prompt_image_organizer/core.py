@@ -245,8 +245,8 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
     # Initialize total progress bar if tqdm is available
     if tqdm and total_files_to_process > 2:
         total_bar = tqdm(
-            total=total_files_to_process, 
-            desc="Processing files" if not config["dry_run"] else "Previewing files", 
+            total=total_files_to_process,
+            desc="Processing files" if not config["dry_run"] else "Previewing files",
             ncols=120,  # Wider progress bar
             bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} files [{elapsed}<{remaining}, {rate_fmt}]',
             dynamic_ncols=True  # Allow dynamic resizing
@@ -260,7 +260,7 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
             threshold=config["sim_thresh"],
             cluster_size_limit=config["cluster_size_limit"]
         )
-        
+
         for cluster_idx, cluster in enumerate(clusters):
             first_file, mtime, prompt = cluster[0]
             date_str = mtime.strftime('%Y%m%d_%H%M')
@@ -271,18 +271,18 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
             # Print session info if debug mode is enabled
             if config.get("debug", False):
                 print(f"\nSession {session_count+1}: {session_folder}")
-            
+
             file_ops = []
             for f, _, _ in cluster:
                 src = os.path.join(config["src_dir"], f)
                 dst = os.path.join(session_folder, f)
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
-            
+
             results = []
 
             with ThreadPoolExecutor(max_workers=config["workers"]) as executor:
                 futures = [executor.submit(move_file_worker, *op) for op in file_ops]
-                
+
                 for fut in as_completed(futures):
                     src, dst, success, err = fut.result()
                     results.append((src, dst, success, err))
