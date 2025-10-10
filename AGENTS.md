@@ -133,7 +133,7 @@ uv run prompt-image-organizer --help
 ## Error Handling
 
 ### Principles
-- **Never Assume**: Don't assume error causes based on superficial similarities
+- **Never Assume**: Never assume error causes based on superficial similarities
 - **Investigate Systematically**: Look for root causes, not symptoms
 - **Graceful Degradation**: Handle errors without crashing the application
 - **User-Friendly Messages**: Provide clear error messages to users
@@ -145,6 +145,12 @@ uv run prompt-image-organizer --help
 - **Permission Errors**: Handle file permission issues
 
 ## Testing Strategy
+
+### Testing Principles
+- **Behavior-Focused**: Write tests that focus on behavior, not implementation details
+- **Avoid Brittle Tests**: Avoid brittle tests (like SQL string assertions)
+- **Test-Driven Development**: Encourage TDD when appropriate
+- **Coverage Goal**: Aim for >80% coverage
 
 ### Unit Tests
 - Write tests for all public functions
@@ -180,10 +186,30 @@ uv run pytest --cov=src/prompt_image_organizer tests/
 
 ## Code Quality Standards
 
+### Core Principles
+- **O.O.D.A.**: Observe, Orient, Decide, Act
+- **One Change at a Time**: Make one logical change per commit
+- **Test Before Committing**: Ensure changes work as expected
+- **Commit Each Change Separately**: Keep changes isolated
+- **Roll Back if Needed**: If a change doesn't fix the issue, roll back
+
+### Code Style & Structure
+- **Clarity Over Brevity**: Clarity is more important than brevity
+- **Explicit Over Implicit**: Explicit is WAY better than implicit
+- **Empathy**: Help the next developer who looks at this code
+- **Separate Concerns**: Keep linting/docs changes separate from logic changes in VCS
+
 ### Code Quality
 - **Linting**: Use flake8, mypy, and other linting tools
 - **Formatting**: Use Black for consistent formatting
 - **Pre-commit Hooks**: Set up pre-commit hooks for quality checks
+
+### Type Safety & Documentation
+- **Never Assume**: Never assume object behavior without type hints
+- **Review APIs**: Review APIs before implementation
+- **Maintain Documentation**: Keep clear documentation up to date
+- **Type Hints**: Use comprehensive type hints for all function parameters and return values
+- **Examples**: Include usage examples in docstrings
 
 ### Documentation
 
@@ -248,6 +274,17 @@ uv run pytest --cov=src/prompt_image_organizer tests/
 - **Automated Checks**: Use CI/CD for automated quality checks
 - **Standards Compliance**: Ensure compliance with project standards
 
+## Best Practices
+
+### Development Approach
+- **Be Pragmatic**: Balance best practices with real-world constraints
+- **SOLID Principles**: Follow SOLID principles where practical
+- **Value-Added Practices**: Recommend practices that add value without unnecessary overhead
+- **Project Context**: Consider project context (public vs. private, client vs. internal)
+- **Precision**: Do exactly what the task requires
+- **Ask for Clarification**: Ask for clarification if something seems wrong
+- **Verify Changes**: Verify changes through testing
+
 ## Communication
 
 ### Team Communication
@@ -261,7 +298,25 @@ uv run pytest --cov=src/prompt_image_organizer tests/
 - **Progress Updates**: Keep users informed of long-running operations
 - **Help Text**: Provide comprehensive help and usage information
 
-## Development Workflow
+## Development Workflow Process
+
+### Process Steps
+1. **OODA** - Observe, Orient, Decide, Act
+2. **Describe** - What to accomplish and how, get approval before proceeding
+3. **Implementation** - Write the code
+4. **Tests** - Write tests following good patterns (avoid brittle tests)
+5. **Commit** - When tests pass, write good commit message and commit
+6. **Document** - Explain implementation and what was tested
+7. **Log** - Write down in cursorrules folder as ongoing log for reference
+8. **Push** - Prompt to push
+9. **URLs** - When pushed, provide commit URL and PR URL
+
+### Key Principles
+- Always get approval before proceeding with implementation
+- Write tests that focus on behavior, not implementation details
+- Avoid brittle tests (like SQL string assertions)
+- Document what was implemented and tested
+- Keep ongoing log for future reference
 
 ### Before Starting
 1. Ensure you're using Python 3.12+
