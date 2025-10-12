@@ -9,6 +9,7 @@ from io import StringIO
 
 # Import the functions we want to test
 from prompt_image_organizer.cli import parse_config, print_help, main
+from prompt_image_organizer.core import DEFAULT_FOLDER_PATTERN
 
 
 class TestCLI(unittest.TestCase):
@@ -38,6 +39,7 @@ class TestCLI(unittest.TestCase):
             self.assertIn("--gap", output)
             self.assertIn("--sim", output)
             self.assertIn("--limit", output)
+            self.assertIn("--pattern", output)
             self.assertIn("-x", output)
 
     def test_parse_config_help_flag(self):
@@ -76,6 +78,14 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(config["src_dir"], "/path/to/src")
             self.assertEqual(config["dst_dir"], "/path/to/dst")
 
+    def test_parse_config_with_src_only(self):
+        """Destination defaults to sessions folder inside source when only src provided."""
+        with patch('sys.argv', ['script.py', '/path/to/src']):
+            config = parse_config()
+
+            self.assertEqual(config["src_dir"], "/path/to/src")
+            self.assertEqual(config["dst_dir"], "/path/to/src/sessions")
+
     def test_parse_config_with_options(self):
         """Test configuration parsing with all options."""
         with patch('sys.argv', [
@@ -97,6 +107,7 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(config["cluster_size_limit"], 50)
             self.assertFalse(config["dry_run"])
             self.assertEqual(config["workers"], 4)
+            self.assertEqual(config["folder_pattern"], f"{DEFAULT_FOLDER_PATTERN}")
 
     def test_parse_config_invalid_gap(self):
         """Test configuration parsing with invalid gap value."""
@@ -143,6 +154,19 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(config["sim_thresh"], 0.7)
             self.assertEqual(config["cluster_size_limit"], 25)
             self.assertEqual(config["workers"], 6)
+            self.assertEqual(config["folder_pattern"], DEFAULT_FOLDER_PATTERN)
+
+    def test_parse_config_env_src_only(self):
+        """DST defaults relative to SRC when provided via environment."""
+        env_vars = {
+            'SRC_DIR': '/env/src',
+        }
+
+        with patch('sys.argv', ['script.py']), patch.dict(os.environ, env_vars, clear=True):
+            config = parse_config()
+
+            self.assertEqual(config["src_dir"], "/env/src")
+            self.assertEqual(config["dst_dir"], "/env/src/sessions")
 
     def test_parse_config_mixed_args_and_env(self):
         """Test that command line arguments override environment variables."""
@@ -162,7 +186,8 @@ class TestCLI(unittest.TestCase):
             '--gap', '60',
             '--sim', '0.8',
             '--limit', '100',
-            '--workers', '8'
+            '--workers', '8',
+            '--pattern', '{date}-{slug}-{count:02d}',
         ]), patch.dict(os.environ, env_vars):
             config = parse_config()
 
@@ -173,6 +198,17 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(config["sim_thresh"], 0.8)
             self.assertEqual(config["cluster_size_limit"], 100)
             self.assertEqual(config["workers"], 8)
+            self.assertEqual(config["folder_pattern"], '{date}-{slug}-{count:02d}')
+
+    def test_parse_config_pattern_env(self):
+        """Test folder pattern parsing from environment variable."""
+        env_vars = {
+            'SESSION_FOLDER_PATTERN': '{datetime}_{slug}',
+        }
+
+        with patch('sys.argv', ['script.py']), patch.dict(os.environ, env_vars):
+            config = parse_config()
+            self.assertEqual(config["folder_pattern"], '{datetime}_{slug}')
 
     def test_main_function_basic(self):
         """Test main function with basic arguments."""

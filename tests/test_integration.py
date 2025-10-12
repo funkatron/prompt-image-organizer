@@ -1,12 +1,13 @@
 """Integration tests for the prompt-image-organizer."""
 
-import unittest
-import tempfile
 import os
+import re
 import shutil
+import tempfile
 import time
+import unittest
 from datetime import datetime, timedelta
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
 
 # Import the functions we want to test
 from prompt_image_organizer.core import (
@@ -262,8 +263,52 @@ class TestIntegration(unittest.TestCase):
         self.assertGreater(len(os.listdir(self.dst_dir)), 0)  # Destination should have session folders
 
         # Check that session folders were created
-        session_folders = [d for d in os.listdir(self.dst_dir) if d.startswith("session_")]
+        pattern = re.compile(r"^\d{8}-\d{4}-[a-z0-9\-]+-\d{3}(?:-\d{2})?$")
+        session_folders = [d for d in os.listdir(self.dst_dir) if pattern.match(d)]
         self.assertGreater(len(session_folders), 0)
+
+    def test_custom_folder_pattern(self):
+        """Ensure custom folder pattern is applied."""
+        custom_src = os.path.join(self.test_dir, "pattern_src")
+        custom_dst = os.path.join(self.test_dir, "pattern_dst")
+        os.makedirs(custom_src, exist_ok=True)
+        os.makedirs(custom_dst, exist_ok=True)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        files = [
+            ("prompt_one_1.png", base_time),
+            ("prompt_one_2.png", base_time + timedelta(minutes=5)),
+            ("abstract_shape_1.png", base_time + timedelta(hours=2)),
+        ]
+
+        for filename, timestamp in files:
+            path = os.path.join(custom_src, filename)
+            with open(path, 'w') as handle:
+                handle.write("test content")
+            os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
+
+        file_data = scan_files(custom_src)
+        batches = group_by_time(file_data, timedelta(minutes=60))
+
+        config = {
+            "src_dir": custom_src,
+            "dst_dir": custom_dst,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 1,
+            "debug": False,
+            "folder_pattern": "{date}_{slug}_{count_padded}",
+        }
+
+        process_clusters(batches, config)
+
+        folders = sorted(os.listdir(custom_dst))
+        self.assertEqual(
+            folders,
+            ["20240101_abstract-shape_001", "20240101_prompt-one_002"],
+        )
 
 
 class TestEdgeCases(unittest.TestCase):

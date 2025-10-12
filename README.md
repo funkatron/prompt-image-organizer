@@ -128,6 +128,10 @@ print_summary(session_count, total_files, move_errors, config["dry_run"])
 - **`--debug`**: Enable verbose logging of session details and file operations
 - **`-x`**: Actually move files (default: dry run)
 
+When you omit the destination argument and the `DST_DIR` environment variable,
+files are organized into `<SRC_DIR>/sessions` by default (for the default
+`SRC_DIR` of `.`, this resolves to `./sessions`).
+
 ## How it works
 
 1. **Scans** your source directory for image files (.png, .jpg, .jpeg, .webp)
@@ -141,10 +145,33 @@ print_summary(session_count, total_files, move_errors, config["dry_run"])
 
 Session folders are named using the pattern:
 ```
-session_YYYYMMDD_HHMM_prompt-name/
+YYYYMMDD-HHMM-slug-count/
 ```
 
-Example: `session_20241201_1430_a-cat-sitting-on-a-chair/`
+- `YYYYMMDD-HHMM`: Timestamp of the earliest image in the cluster.
+- `slug`: Up to three meaningful prompt tokens (stopwords removed, max 18 chars).
+- `count`: Zero-padded file count (e.g., `007`).
+- If multiple clusters share the same timestamp and slug, a three-letter checksum
+  is inserted before the count: `YYYYMMDD-HHMM-slug-abc-007/`.
+
+Example: `20241201-1430-cat-sitting-chair-004/`
+
+Customize the naming pattern with `--pattern` or the `SESSION_FOLDER_PATTERN`
+environment variable. Patterns use Python `str.format` placeholders:
+
+- `date`: Earliest image date (`YYYYMMDD`)
+- `time`: Earliest image time (`HHMM`)
+- `datetime`: Combined timestamp (`YYYYMMDD-HHMM`)
+- `slug`: Sanitized prompt slug (checksum added automatically if needed)
+- `base_slug`: Sanitized slug without checksum
+- `count`: Cluster size as an integer
+- `count_padded`: Cluster size with zero padding (`003`)
+- `cluster_index`: Cluster number within the batch (1-based)
+- `batch_index`: Batch number (1-based)
+- `checksum`: Three-letter checksum, if applied
+- `checksum_suffix`: `-abc` when checksum is present, otherwise an empty string
+
+Default pattern: `{datetime}-{slug}{checksum_suffix}-{count_padded}`
 
 ## File naming conventions
 
@@ -224,26 +251,4 @@ prompt-image-organizer/
 
 ## License
 
-MIT License
-
-Copyright Edward Finkler (c) 2025
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-
-
+This project is licensed under the MIT License. See [`LICENSE`](LICENSE) for details.

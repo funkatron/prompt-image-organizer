@@ -1,6 +1,6 @@
 [project]
 name = "prompt-image-organizer"
-version = "0.1.1"
+version = "1.2.0"
 description = "Organize AI-generated images by their prompts and creation time"
 readme = "README.md"
 requires-python = ">=3.12"

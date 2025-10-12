@@ -13,6 +13,7 @@ from .core import (
     group_by_time,
     process_clusters,
     print_summary,
+    DEFAULT_FOLDER_PATTERN,
 )
 
 
@@ -26,13 +27,14 @@ Usage:
 
 Arguments:
   SRC_DIR           Source image directory (default: $SRC_DIR or current dir)
-  DST_DIR           Destination session directory (default: $DST_DIR or ./sessions)
+  DST_DIR           Destination session directory (default: $DST_DIR or SRC_DIR/sessions)
 
 Options:
   --gap MIN         Max gap (minutes) to group into a batch/session [env: SESSION_GAP_MINUTES, default: 60]
   --sim F           Prompt similarity threshold [0-1, env: PROMPT_SIMILARITY, default: 0.8]
   --limit N         Maximum cluster (session) size [env: SESSION_CLUSTER_LIMIT, default: unlimited]
   --workers N       Number of concurrent file moves (default: 8)
+  --pattern P      Folder naming pattern (default: {datetime}-{slug}{checksum_suffix}-{count_padded})
   --debug           Enable verbose logging (shows session details and file operations)
   -x                Actually move files (default: dry run)
   -h, --help        Show this help message
@@ -57,6 +59,10 @@ def parse_config() -> Dict[str, Any]:
     parser.add_argument('--sim', type=float, help="Prompt similarity threshold (default 0.8)")
     parser.add_argument('--limit', type=int, help="Maximum session (cluster) size (default: unlimited)")
     parser.add_argument('--workers', type=int, help="Number of concurrent file moves (default: 8)")
+    parser.add_argument(
+        '--pattern',
+        help=f"Folder naming pattern (default: {DEFAULT_FOLDER_PATTERN})"
+    )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
     parser.add_argument('-x', action='store_true', help="Actually move files")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
@@ -67,13 +73,19 @@ def parse_config() -> Dict[str, Any]:
         sys.exit(0)
 
     src_dir = args.src or os.environ.get("SRC_DIR", ".")
-    dst_dir = args.dst or os.environ.get("DST_DIR", "./sessions")
+
+    if args.dst:
+        dst_dir = args.dst
+    else:
+        env_dst = os.environ.get("DST_DIR")
+        dst_dir = env_dst if env_dst is not None else os.path.join(src_dir, "sessions")
     gap_min = args.gap if args.gap is not None else get_env_int("SESSION_GAP_MINUTES", 60)
     sim_thresh = args.sim if args.sim is not None else get_env_float("PROMPT_SIMILARITY", 0.8)
     cluster_size_limit = args.limit if args.limit is not None else get_env_int("SESSION_CLUSTER_LIMIT", 0) or None
     dry_run = not args.x
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
     debug = args.debug
+    folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
     return {
         "src_dir": src_dir,
         "dst_dir": dst_dir,
@@ -82,7 +94,8 @@ def parse_config() -> Dict[str, Any]:
         "cluster_size_limit": cluster_size_limit,
         "dry_run": dry_run,
         "workers": workers,
-        "debug": debug
+        "debug": debug,
+        "folder_pattern": folder_pattern,
     }
 
 

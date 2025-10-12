@@ -1,17 +1,39 @@
 """Core functionality for prompt image organizer."""
 
+import base64
+import hashlib
 import os
-import shutil
 import re
+import shutil
+from collections import defaultdict
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
 from difflib import SequenceMatcher
-from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Tuple, Dict, Any, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from tqdm import tqdm
 except ImportError:
     tqdm = None  # We'll handle this gracefully.
+
+
+STOPWORDS: set[str] = {
+    "a",
+    "an",
+    "and",
+    "at",
+    "be",
+    "by",
+    "for",
+    "in",
+    "of",
+    "on",
+    "the",
+    "to",
+    "with",
+}
+
+DEFAULT_FOLDER_PATTERN = "{datetime}-{slug}{checksum_suffix}-{count_padded}"
 
 
 def get_env_int(name: str, default: int) -> int:
@@ -47,24 +69,75 @@ def get_env_float(name: str, default: float) -> float:
 
 
 def sanitize_for_folder(name: str) -> str:
-    """Sanitize a string for use as a folder name.
+    """Create a compact slug suitable for folder names.
 
     Args:
-        name: Original string to sanitize
+        name: Original string to sanitize.
 
     Returns:
-        Sanitized string suitable for folder names (lowercase, dashes, max 30 chars)
+        Lowercase slug composed of up to three meaningful tokens joined with
+        hyphens and trimmed to 18 characters.
     """
-    # Replace underscores with dashes
-    s = re.sub(r'[_]+', '-', name)
-    # Replace non-alphanumeric, non-dash, non-dot chars with dash
-    s = re.sub(r'[^a-zA-Z0-9\-\.]', '-', s)
-    # Collapse multiple dashes
-    s = re.sub(r'-+', '-', s)
-    # Strip leading/trailing dashes/underscores
-    s = s.strip('-_').lower()
-    # Truncate to 30 chars and strip trailing dashes again
-    return s[:30].rstrip('-')
+    tokens = re.findall(r"[A-Za-z0-9]+", name.lower())
+    filtered_tokens = [token for token in tokens if token not in STOPWORDS]
+    selected_tokens = filtered_tokens or tokens
+
+    if not selected_tokens:
+        return ""
+
+    selected_tokens = selected_tokens[:3]
+    slug = "-".join(selected_tokens)
+    max_length = 18
+
+    while len(slug) > max_length and len(selected_tokens) > 1:
+        selected_tokens = selected_tokens[:-1]
+        slug = "-".join(selected_tokens)
+
+    if len(slug) > max_length:
+        slug = slug[:max_length].rstrip("-")
+
+    return slug
+
+
+def prompt_checksum(prompt: str, attempt: int = 0) -> str:
+    """Return a short, base32 checksum for the given prompt."""
+    salt = f"{prompt}-{attempt}" if attempt else prompt
+    digest = hashlib.blake2b(salt.encode("utf-8"), digest_size=3).digest()
+    encoded = base64.b32encode(digest).decode("ascii").rstrip("=").lower()
+    return encoded[:3]
+
+
+def build_folder_name(pattern: str, values: Dict[str, Any]) -> str:
+    """Format the session folder name using the provided pattern and values.
+
+    Args:
+        pattern: Folder naming pattern using str.format placeholders.
+        values: Mapping of placeholder names to substitution values.
+
+    Returns:
+        Formatted folder name string.
+
+    Raises:
+        ValueError: If the pattern references unknown placeholders or has
+            invalid formatting directives.
+    """
+    try:
+        folder_name = pattern.format(**values)
+    except KeyError as exc:
+        missing = exc.args[0]
+        raise ValueError(
+            f"Unknown placeholder '{missing}' in folder pattern '{pattern}'."
+        ) from exc
+    except ValueError as exc:
+        raise ValueError(
+            f"Invalid folder pattern '{pattern}': {exc}"
+        ) from exc
+
+    folder_name = folder_name.strip()
+    if not folder_name:
+        raise ValueError("Folder pattern produced an empty name.")
+
+    return folder_name
 
 
 def get_image_files(src_dir: str) -> List[str]:
@@ -165,21 +238,24 @@ def cluster_prompts(batch: List[Tuple[str, datetime, str]], threshold: float = 0
 
 
 def find_unique_folder_name(dst_dir: str, base_folder_name: str) -> str:
-    """Find a unique folder name by appending numbers if needed.
+    """Find a unique folder name by appending numeric suffixes when required.
 
     Args:
-        dst_dir: Destination directory
-        base_folder_name: Base folder name
+        dst_dir: Destination directory.
+        base_folder_name: Preferred folder name.
 
     Returns:
-        Unique folder name
+        Folder name that does not exist on disk.
     """
-    folder_name = base_folder_name
-    counter = 1
-    while os.path.exists(os.path.join(dst_dir, folder_name)):
-        folder_name = f"{base_folder_name}_{counter}"
+    if not os.path.exists(os.path.join(dst_dir, base_folder_name)):
+        return base_folder_name
+
+    counter = 2
+    while True:
+        candidate = f"{base_folder_name}-{counter:02d}"
+        if not os.path.exists(os.path.join(dst_dir, candidate)):
+            return candidate
         counter += 1
-    return folder_name
 
 
 def move_file_worker(src: str, dst: str, session_folder: str, dry_run: bool) -> Tuple[str, str, bool, Optional[str]]:
@@ -237,6 +313,9 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
     session_count = 0
     total_files = 0
     move_errors = 0
+    base_slug_tracker: Dict[str, set[str]] = defaultdict(set)
+    slug_tracker: Dict[str, set[str]] = defaultdict(set)
+    folder_pattern = config.get("folder_pattern", DEFAULT_FOLDER_PATTERN)
 
     # Calculate total files across all batches for progress tracking
     total_files_to_process = sum(len(cluster) for batch in batches
@@ -263,8 +342,48 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
 
         for cluster_idx, cluster in enumerate(clusters):
             first_file, mtime, prompt = cluster[0]
-            date_str = mtime.strftime('%Y%m%d_%H%M')
-            base_folder_name = f"session_{date_str}_{sanitize_for_folder(prompt)}"
+            timestamp = mtime.strftime("%Y%m%d-%H%M")
+
+            base_slug = sanitize_for_folder(prompt) or "prompt"
+            base_slugs = base_slug_tracker[timestamp]
+            slugs_in_use = slug_tracker[timestamp]
+
+            checksum = ""
+            if base_slug in base_slugs:
+                attempt = 0
+                while True:
+                    checksum_candidate = prompt_checksum(prompt, attempt)
+                    candidate_slug = f"{base_slug}-{checksum_candidate}"
+                    if candidate_slug not in slugs_in_use:
+                        slug = candidate_slug
+                        checksum = checksum_candidate
+                        break
+                    attempt += 1
+            else:
+                base_slugs.add(base_slug)
+                slug = base_slug
+
+            slugs_in_use.add(slug)
+
+            folder_values = {
+                "date": mtime.strftime("%Y%m%d"),
+                "time": mtime.strftime("%H%M"),
+                "datetime": timestamp,
+                "slug": slug,
+                "base_slug": base_slug,
+                "count": len(cluster),
+                "count_padded": f"{len(cluster):03d}",
+                "cluster_index": cluster_idx + 1,
+                "batch_index": batch_idx + 1,
+                "checksum": checksum,
+                "checksum_suffix": f"-{checksum}" if checksum else "",
+            }
+
+            try:
+                base_folder_name = build_folder_name(folder_pattern, folder_values)
+            except ValueError as exc:
+                raise ValueError(f"Failed to build folder name: {exc}") from exc
+
             folder_name = find_unique_folder_name(config["dst_dir"], base_folder_name)
             session_folder = os.path.join(config["dst_dir"], folder_name)
 

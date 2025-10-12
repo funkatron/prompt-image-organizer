@@ -19,6 +19,7 @@ from prompt_image_organizer.core import (
     get_env_int,
     get_env_float,
     move_file_worker,
+    process_clusters,
 )
 
 
@@ -29,12 +30,12 @@ class TestUtils(unittest.TestCase):
         """Test folder name sanitization."""
         test_cases = [
             ("Hello World", "hello-world"),
-            ("A Cat Sitting on a Chair", "a-cat-sitting-on-a-chair"),
+            ("A Cat Sitting on a Chair", "cat-sitting-chair"),
             ("Special@#$%^&*()Characters", "special-characters"),
             ("Multiple   Spaces", "multiple-spaces"),
-            ("Very Long Name That Should Be Truncated To Thirty Characters", "very-long-name-that-should-be"),
+            ("Very Long Name That Should Be Truncated To Thirty Characters", "very-long-name"),
             ("Numbers123", "numbers123"),
-            ("Mixed-Case_With_Underscores", "mixed-case-with-underscores"),
+            ("Mixed-Case_With_Underscores", "mixed-case"),
             ("", ""),
             ("   ", ""),
             ("---", ""),
@@ -44,7 +45,7 @@ class TestUtils(unittest.TestCase):
             with self.subTest(input_name=input_name):
                 result = sanitize_for_folder(input_name)
                 self.assertEqual(result, expected)
-                self.assertLessEqual(len(result), 30)
+                self.assertLessEqual(len(result), 18)
 
     def test_extract_prompt(self):
         """Test prompt extraction from filenames."""
@@ -120,23 +121,23 @@ class TestUtils(unittest.TestCase):
         """Test unique folder name generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
             # Create some existing folders
-            os.makedirs(os.path.join(temp_dir, "test_folder"), exist_ok=True)
-            os.makedirs(os.path.join(temp_dir, "test_folder_1"), exist_ok=True)
-            os.makedirs(os.path.join(temp_dir, "test_folder_2"), exist_ok=True)
+            os.makedirs(os.path.join(temp_dir, "test-folder"), exist_ok=True)
+            os.makedirs(os.path.join(temp_dir, "test-folder-02"), exist_ok=True)
+            os.makedirs(os.path.join(temp_dir, "test-folder-03"), exist_ok=True)
 
             # Test finding unique name
-            result = find_unique_folder_name(temp_dir, "test_folder")
-            self.assertEqual(result, "test_folder_3")
+            result = find_unique_folder_name(temp_dir, "test-folder")
+            self.assertEqual(result, "test-folder-04")
 
             # Test with non-existent base name
-            result = find_unique_folder_name(temp_dir, "new_folder")
-            self.assertEqual(result, "new_folder")
+            result = find_unique_folder_name(temp_dir, "new-folder")
+            self.assertEqual(result, "new-folder")
 
             # Test with empty directory
             empty_dir = os.path.join(temp_dir, "empty")
             os.makedirs(empty_dir, exist_ok=True)
-            result = find_unique_folder_name(empty_dir, "test_folder")
-            self.assertEqual(result, "test_folder")
+            result = find_unique_folder_name(empty_dir, "test-folder")
+            self.assertEqual(result, "test-folder")
 
 
 class TestFileOperations(unittest.TestCase):
@@ -187,6 +188,24 @@ class TestFileOperations(unittest.TestCase):
         expected_image_files = ["image1.png", "image2.jpg", "image3.jpeg", "image4.webp", "image5.PNG", "image6.JPG"]
 
         self.assertEqual(sorted(image_files), sorted(expected_image_files))
+
+    def test_process_clusters_invalid_pattern(self):
+        """Invalid folder pattern should raise a ValueError."""
+        batches = [[("image1.png", datetime(2024, 1, 1, 12, 0, 0), "test prompt")]]
+        config = {
+            "src_dir": self.temp_dir,
+            "dst_dir": self.temp_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": True,
+            "workers": 1,
+            "debug": False,
+            "folder_pattern": "{unknown}",
+        }
+
+        with self.assertRaises(ValueError):
+            process_clusters(batches, config)
 
     def test_group_by_time(self):
         """Test time-based grouping."""

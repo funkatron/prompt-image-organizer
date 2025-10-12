@@ -5,6 +5,19 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+## [1.2.0] - 2025-01-12
+
+### Added
+- Configurable session folder naming via `--pattern` / `SESSION_FOLDER_PATTERN`,
+  including rich placeholders for timestamps, slug details, and cluster metadata.
+- Top-level `LICENSE` file for easier access to licensing terms.
+
+### Changed
+- Default destination directory now falls back to `<SRC_DIR>/sessions` when no
+  destination argument or `DST_DIR` environment variable is provided.
+
 ## [0.1.1] - 2025-01-11
 
 ### Changed
@@ -19,8 +32,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **`--debug` flag** to enable verbose logging of session details and file operations
 - GitHub repository setup
 - Comprehensive documentation updates
-
-## [Unreleased]
 
 ## [0.1.0] - 2025-01-11
 
@@ -79,9 +90,9 @@ The tool expects image files with prompts in the filename:
 
 ### Session Folder Structure
 Organized files are placed in session folders with the naming pattern:
-`session_YYYYMMDD_HHMM_sanitized-prompt/`
+`YYYYMMDD-HHMM-slug-count/`
 
-Example: `session_20241201_1430_a-cat-sitting-on-a-chair/`
+Example: `20241201-1430-cat-sitting-chair-004/`
 
 ---
 
