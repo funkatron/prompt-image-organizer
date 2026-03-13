@@ -2,7 +2,7 @@
 
 ## Project Overview
 
-Prompt Image Organizer is a Python CLI tool that intelligently organizes AI-generated images into session folders based on their prompts and creation time. The project uses modern Python tooling with `uv` for dependency management and follows semantic versioning.
+Prompt Image Organizer is a Python CLI tool that organizes AI-generated images into dated session folders based on prompt similarity and creation time. The project uses modern Python tooling with `uv` for dependency management and follows semantic versioning on the `0.x` line.
 
 ## Architecture & Core Components
 
@@ -18,11 +18,12 @@ src/prompt_image_organizer/
 ### Key Modules
 
 #### `core.py` - Core Business Logic
-- **File Operations**: `scan_files()`, `move_file_worker()`, `get_image_files()`
+- **File Operations**: `scan_files()`, `move_file_worker()`, `get_image_files()`, `compute_file_md5()`
 - **Time Grouping**: `group_by_time()` - Groups files by configurable time gaps
 - **Prompt Clustering**: `cluster_prompts()` - Clusters by prompt similarity using difflib
 - **Processing Pipeline**: `process_clusters()` - Main orchestration function
 - **Utilities**: `sanitize_for_folder()`, `extract_prompt()`, `similar()`
+- **Aggregate Link Helpers**: `cleanup_broken_symlinks()`, `backfill_all_symlinks()`
 
 #### `cli.py` - Command Line Interface
 - **Configuration**: `parse_config()` - Parses CLI args and environment variables
@@ -92,10 +93,11 @@ uv run prompt-image-organizer --help
 - Optional cluster size limit (configurable via `--limit`)
 
 ### 4. File Processing (`process_clusters`)
-- Creates session folders with descriptive names
+- Creates dated session folders using safe neutral default names
 - Uses `ThreadPoolExecutor` for concurrent file operations
 - Implements progress tracking with `tqdm`
 - Handles dry-run mode for safe previewing
+- Renames moved files to MD5-based filenames and maintains `_all/` symlinks
 
 ## Configuration System
 
@@ -104,6 +106,10 @@ uv run prompt-image-organizer --help
 - `--sim F`: Similarity threshold 0-1 (default: 0.8)
 - `--limit N`: Max files per session (default: unlimited)
 - `--workers N`: Concurrent operations (default: 8)
+- `--pattern P`: Session folder naming pattern
+- `--cleanup-broken-links`: Remove broken symlinks from `DST_DIR/_all`
+- `--backfill-all-links`: Rebuild missing `_all` symlinks from existing sessions
+- `--open`: Open the destination folder on success
 - `--debug`: Verbose logging mode
 - `-x`: Actually move files (default: dry run)
 
@@ -114,6 +120,7 @@ uv run prompt-image-organizer --help
 - `PROMPT_SIMILARITY`: Similarity threshold override
 - `SESSION_CLUSTER_LIMIT`: Cluster size limit override
 - `SESSION_WORKERS`: Worker count override
+- `SESSION_FOLDER_PATTERN`: Session folder naming override
 
 ## Progress Tracking System
 
@@ -243,6 +250,7 @@ uv run pytest --cov=src/prompt_image_organizer tests/
 - **Path Validation**: Validate file paths to prevent directory traversal
 - **File Permissions**: Respect file permissions
 - **Safe File Operations**: Use safe file handling practices
+- **Safe Naming Defaults**: Prefer neutral names and avoid semantic interpretation of raw filename text in default behavior
 
 ### Data Privacy
 - **User Data**: Handle user data responsibly
@@ -339,7 +347,8 @@ uv run pytest --cov=src/prompt_image_organizer tests/
 - **Progress Tracking**: Use tqdm for long-running operations
 
 ### Data Management
-- **Sessions**: Store session data in `sessions/` directory
+- **Sessions**: Store session data under `DST_DIR/YYYYMMDD/<session-folder>/`
+- **Aggregate Directory**: Maintain top-level `_all/` symlinks for all organized images
 - **Temporary Files**: Clean up temporary files after processing
 - **Output Organization**: Structure output directories logically
 

@@ -1,6 +1,6 @@
 """Prompt Image Organizer - Organize AI-generated images by their prompts and creation time."""
 
-__version__ = "1.2.0"
+__version__ = "0.1.2"
 
 from .core import (
     backfill_all_symlinks,

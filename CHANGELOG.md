@@ -7,120 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [1.2.0] - 2025-01-12
+## [0.1.2] - 2026-03-13
 
 ### Added
-- Configurable session folder naming via `--pattern` / `SESSION_FOLDER_PATTERN`,
-  including rich placeholders for timestamps, slug details, and cluster metadata.
-- Top-level `LICENSE` file for easier access to licensing terms.
+- Safer neutral default session naming with `{datetime}-session-{cluster_index:03d}-{count_padded}`
+- Dated destination layout as `YYYYMMDD/<session-folder>/`
+- Top-level `_all/` aggregate symlink directory
+- `--cleanup-broken-links` to remove broken `_all` symlinks
+- `--backfill-all-links` to rebuild missing `_all` symlinks from existing sessions
+- `--open` to open the destination folder after a successful run
+- Debug scan progress output for larger source directories
 
 ### Changed
-- Default destination directory now falls back to `<SRC_DIR>/sessions` when no
-  destination argument or `DST_DIR` environment variable is provided.
+- Actual moved filenames now use MD5 content hashes plus the original extension
+- Dry-run folder name reservation now matches real execution
+- Folder pattern validation now rejects traversal, separators, and paths outside the destination root
+- CLI parsing now validates `--gap`, `--sim`, `--limit`, and `--workers` before processing
+
+### Fixed
+- Backfill no longer creates duplicate `_all` symlinks for targets that are already linked
 
 ## [0.1.1] - 2025-01-11
 
 ### Changed
-- **Progress bar now tracks total progress** across all clusters instead of per-cluster progress
-- Improved user experience with single progress bar showing overall file processing status
-- **Clean progress bar display** - verbose logging only shown when `--debug` flag is enabled
-- **Enhanced progress bar updates** - shows session details, current file being processed, and batch progress
-- **Improved progress bar visibility** - wider bar (120 cols), better formatting, longer filename display
-- **Simplified progress bar** - focuses on visible per-file progress updates with clear "files" labeling
+- Progress bar now tracks total progress across all clusters instead of per-cluster progress
+- Improved user experience with a single progress bar showing overall file processing status
+- Clean progress bar display with verbose logging only under `--debug`
+- Enhanced progress bar updates with current file context
+- Wider progress bar formatting for better visibility
 
 ### Added
-- **`--debug` flag** to enable verbose logging of session details and file operations
+- `--debug` flag for verbose session and file operation logging
 - GitHub repository setup
-- Comprehensive documentation updates
+- Documentation updates
 
 ## [0.1.0] - 2025-01-11
 
 ### Added
-- **Initial release** of Prompt Image Organizer
-- **Smart image clustering** by prompt similarity and time gaps
-- **Modern Python package structure** with `src/prompt_image_organizer/`
-- **Comprehensive type hints** throughout the codebase
-- **CLI interface** with `prompt-image-organizer` command
-- **Safe operations** with dry-run mode for previewing changes
-- **Progress tracking** with tqdm progress bars
-- **Multi-threaded file operations** for fast processing
-- **Flexible configuration** via command-line arguments and environment variables
-- **Comprehensive test suite** with 41 tests covering all functionality
-- **Code quality tools** integration (Black, Flake8, mypy)
-- **Documentation** including README, examples, and usage guides
-
-### Features
-- **File scanning**: Automatically detects image files (.png, .jpg, .jpeg, .webp)
-- **Prompt extraction**: Intelligently extracts prompts from filenames
-- **Time-based grouping**: Groups images by configurable time gaps
-- **Similarity clustering**: Clusters images by prompt similarity with adjustable threshold
-- **Session folder creation**: Creates organized session folders with descriptive names
-- **Error handling**: Graceful handling of file errors, permissions, and edge cases
-- **Environment variables**: Full configuration via environment variables
-- **Python API**: Programmatic access to all core functionality
-
-### Technical Details
-- **Python 3.12+** requirement
-- **uv** for dependency management
-- **Modern packaging** with pyproject.toml
-- **Type safety** with comprehensive type hints
-- **Test coverage** with unittest and pytest support
-- **Code formatting** with Black and linting with Flake8
-- **Type checking** with mypy
-
-### Usage Examples
-```bash
-# Basic usage
-uv run prompt-image-organizer ./images ./sessions
-
-# With custom settings
-uv run prompt-image-organizer ./images ./sessions --gap 30 --sim 0.9 -x
-
-# Using environment variables
-export SESSION_GAP_MINUTES=45
-export PROMPT_SIMILARITY=0.85
-uv run prompt-image-organizer ./images ./sessions -x
-```
-
-### File Naming Conventions
-The tool expects image files with prompts in the filename:
-- `my_prompt_1.png` → prompt: `my_prompt`
-- `another_prompt_2.jpg` → prompt: `another_prompt`
-- `complex_prompt_with_spaces_3.webp` → prompt: `complex_prompt_with_spaces`
-
-### Session Folder Structure
-Organized files are placed in session folders with the naming pattern:
-`YYYYMMDD-HHMM-slug-count/`
-
-Example: `20241201-1430-cat-sitting-chair-004/`
-
----
-
-## Release Notes
-
-### v0.1.0 - Initial Release
-This is the initial release of Prompt Image Organizer, a Python tool for organizing AI-generated images by their prompts and creation time. The tool provides smart clustering, safe operations, and a modern CLI interface.
-
-**Key Features:**
-- ✅ Smart image clustering by prompt similarity and time gaps
-- ✅ Safe dry-run mode for previewing changes
-- ✅ Multi-threaded file operations for speed
-- ✅ Comprehensive type hints and testing
-- ✅ Modern Python package structure
-- ✅ Flexible configuration via CLI and environment variables
-
-**Installation:**
-```bash
-# Development
-git clone https://github.com/funkatron/prompt-image-organizer.git
-cd prompt-image-organizer
-uv sync
-uv pip install -e .
-
-# Usage
-uv run prompt-image-organizer --help
-```
-
-**Breaking Changes:** None (initial release)
-
-**Migration Guide:** Not applicable (initial release)
+- Initial release
+- Smart image clustering by prompt similarity and time gaps
+- Modern Python package structure with `src/prompt_image_organizer/`
+- CLI entry point via `prompt-image-organizer`
+- Dry-run preview mode
+- Progress tracking with `tqdm`
+- Multi-threaded file operations
+- CLI and environment-variable configuration
+- Test suite covering core functionality

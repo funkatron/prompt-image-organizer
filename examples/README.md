@@ -1,85 +1,63 @@
 # Prompt Image Organizer Examples
 
-This directory focuses on practical, scenario-based examples. For full documentation, installation, configuration, and API usage, see `README.md`.
+This directory contains quick usage recipes for the current layout and CLI.
 
-## Quick Start Recipes
+## Quick Start
 
 ```bash
-# Preview (dry run)
-uv run prompt-image-organizer ./images ./sessions
+# Preview organization
+uv run prompt-image-organizer ./images ./image-sessions
 
-# Actually move files
-uv run prompt-image-organizer ./images ./sessions -x
-
-# Higher similarity threshold and larger gap (e.g., full-day sessions)
-uv run prompt-image-organizer ./images ./sessions --gap 1440 --sim 0.5 -x
-
-# More workers for faster I/O-bound moves
-uv run prompt-image-organizer ./images ./sessions --workers 16 -x
+# Move files and open the destination when done
+uv run prompt-image-organizer ./images ./image-sessions -x --open
 ```
 
-## Real-World Scenarios
+Resulting structure:
 
-### 1) Organize a large export by day (common for mobile/Draw Things dumps)
+```text
+./image-sessions/
+  20260313/
+    20260313-1103-session-002-054/
+      63630146fe54c453e9d4ad0d98d0a5de.png
+  _all/
+    63630146fe54c453e9d4ad0d98d0a5de.png -> ../20260313/20260313-1103-session-002-054/63630146fe54c453e9d4ad0d98d0a5de.png
+```
+
+## Real-World Recipes
+
+### Organize a large dump with debug output
+
 ```bash
-uv run prompt-image-organizer ./dump ./sessions --gap 1440 --sim 0.5
+uv run prompt-image-organizer ./dump ./image-sessions --debug -x
 ```
-- Groups images into daily sessions and clusters similar prompts.
-- Start in dry-run to preview folder structure; add `-x` to move.
 
-### 2) Group by working session (short bursts)
+### Use a larger time gap
+
 ```bash
-uv run prompt-image-organizer ./imgs ./sessions --gap 30 --sim 0.8 -x
+uv run prompt-image-organizer ./dump ./image-sessions --gap 1440 --sim 0.5 -x
 ```
-- Treats images within 30 minutes as a session; higher similarity reduces mixing.
 
-### 3) Cap session size for extremely large clusters
+### Limit oversized sessions
+
 ```bash
-uv run prompt-image-organizer ./imgs ./sessions --limit 100 -x
+uv run prompt-image-organizer ./dump ./image-sessions --limit 100 -x
 ```
-- Prevents any single session from growing unmanageably large.
 
-## Troubleshooting Examples
+### Rebuild missing `_all` links
 
-### See what the tool is doing
 ```bash
-uv run prompt-image-organizer ./imgs ./sessions --debug
-```
-- Shows session creation and file operations. Errors are always shown.
-
-### Progress bar clarity
-- The bar shows per-file progress (X/Y files). If your terminal truncates output, scroll to the bottom or run in a larger window.
-
-### Common pitfalls
-- `--gap` accepts an integer (minutes), not `1m`. Use `--gap 1`.
-- Without `-x`, it is a dry run (no file moves). Add `-x` to move.
-- If performance is slow on network drives, try reducing `--workers`.
-
-## Minimal Python API Pointer
-
-For a complete Python API example, see `README.md` (section: Python API). Below is a minimal sketch:
-
-```python
-from prompt_image_organizer import scan_files, group_by_time, process_clusters, print_summary
-from datetime import timedelta
-
-files = scan_files("./images")
-batches = group_by_time(files, timedelta(minutes=60))
-config = {
-    "src_dir": "./images",
-    "dst_dir": "./sessions",
-    "gap": timedelta(minutes=60),
-    "sim_thresh": 0.8,
-    "cluster_size_limit": None,
-    "dry_run": True,
-    "workers": 8,
-}
-session_count, total_files, move_errors = process_clusters(batches, config)
-print_summary(session_count, total_files, move_errors, config["dry_run"])
+uv run prompt-image-organizer ./images ./image-sessions --backfill-all-links -x
 ```
 
----
+### Remove broken `_all` links
 
-Tips:
-- Start with a dry run, review the proposed folder layout, then add `-x`.
-- Use `--debug` when you need detailed insight; otherwise keep output clean.
+```bash
+uv run prompt-image-organizer ./images ./image-sessions --cleanup-broken-links -x
+```
+
+## Notes
+
+- Without `-x`, the tool performs a dry run.
+- Default session folder names are neutral: `YYYYMMDD-HHMM-session-<cluster>-<count>`.
+- Moved files are renamed to MD5-based filenames plus their original extension.
+- `_all/` contains symlinks, not copies.

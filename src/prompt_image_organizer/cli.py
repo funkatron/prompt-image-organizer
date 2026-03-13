@@ -37,7 +37,7 @@ Options:
   --sim F           Prompt similarity threshold [0-1, env: PROMPT_SIMILARITY, default: 0.8]
   --limit N         Maximum cluster (session) size [env: SESSION_CLUSTER_LIMIT, default: unlimited]
   --workers N       Number of concurrent file moves (default: 8)
-  --pattern P      Folder naming pattern (default: {datetime}-{slug}{checksum_suffix}-{count_padded})
+  --pattern P      Folder naming pattern (default: {datetime}-session-{cluster_index:03d}-{count_padded})
   --cleanup-broken-links
                     Remove broken symlinks from DST_DIR/_all before processing
   --backfill-all-links

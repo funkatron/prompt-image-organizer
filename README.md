@@ -1,110 +1,190 @@
 # Prompt Image Organizer
 
-Organize AI-generated images into session folders based on their prompts and creation time.
+Organize AI-generated images into dated session folders with safe, neutral names.
 
-## What it does
+## What It Does
 
-This tool helps you organize AI-generated images (like those from Draw Things, Stable Diffusion, etc.) by grouping them into session folders based on:
+The tool scans a source directory, groups image files by time and prompt similarity,
+and organizes them into a destination tree like:
 
-- **Time proximity**: Images created within a specified time gap are grouped into the same session
-- **Prompt similarity**: Images with similar prompts are clustered into the same session
-- **Creation order**: Maintains chronological organization within sessions
+```text
+DEST_DIR/
+  20260313/
+    20260313-1103-session-002-054/
+      63630146fe54c453e9d4ad0d98d0a5de.png
+      792cec298af48d2e83303ff9e0558d16.png
+  _all/
+    63630146fe54c453e9d4ad0d98d0a5de.png -> ../20260313/20260313-1103-session-002-054/63630146fe54c453e9d4ad0d98d0a5de.png
+```
 
-## Features
+Key behaviors:
 
-- **Smart clustering**: Groups images by prompt similarity and time gaps into session folders
-- **Flexible configuration**: Adjustable time gaps and similarity thresholds
-- **Safe operations**: Dry-run mode to preview changes before making them
-- **Progress tracking**: Visual progress bars showing per-file progress
-- **Concurrent processing**: Multi-threaded file operations for speed
+- Groups images by time proximity and prompt similarity
+- Creates dated folders as `YYYYMMDD/<session_folder>/`
+- Uses safe neutral default session names
+- Renames moved files to content-hash filenames
+- Maintains a top-level `_all/` directory of symlinks to every organized image
+- Supports dry-run preview, cleanup of broken `_all` links, and backfill of `_all`
 
 ## Installation
 
 ### Development Setup
 
 ```bash
-# Clone the repository
 git clone <repository-url>
 cd prompt-image-organizer
-
-# Install dependencies with uv
 uv sync
-
-# Install package in development mode
 uv pip install -e .
 ```
 
-### From PyPI (when published)
+### From PyPI
 
 ```bash
 pip install prompt-image-organizer
 ```
 
-## Usage
-
-### Command Line Interface
+## Quick Start
 
 ```bash
-# Preview what would be organized (dry run)
-uv run prompt-image-organizer ./source-images ./session-folders
+# Preview the organization plan
+uv run prompt-image-organizer ./source-images ./image-sessions
 
-# Actually organize the images into session folders
-uv run prompt-image-organizer ./source-images ./session-folders -x
+# Actually move files
+uv run prompt-image-organizer ./source-images ./image-sessions -x
 
-# Or if installed globally
-prompt-image-organizer ./source-images ./session-folders -x
+# Open the destination folder when done
+uv run prompt-image-organizer ./source-images ./image-sessions -x --open
 ```
 
-### Advanced options
+If you omit `DST_DIR`, the tool uses `<SRC_DIR>/sessions`.
+
+## Common Commands
 
 ```bash
-# Custom time gap (45 minutes) and similarity threshold (0.9)
+# Change the time gap and similarity threshold
 uv run prompt-image-organizer ./imgs ./out --gap 45 --sim 0.9 -x
 
-# Limit cluster size to 100 images per session folder
+# Cap session size
 uv run prompt-image-organizer ./imgs ./out --limit 100 -x
 
-# Use more worker threads for faster processing
-uv run prompt-image-organizer ./imgs ./out --workers 12 -x
-
-# Enable debug mode to see detailed session and file operation logs
+# Show verbose progress and per-file actions
 uv run prompt-image-organizer ./imgs ./out --debug -x
+
+# Remove broken links from DEST_DIR/_all
+uv run prompt-image-organizer ./imgs ./out --cleanup-broken-links -x
+
+# Rebuild missing _all links from existing dated session folders
+uv run prompt-image-organizer ./imgs ./out --backfill-all-links -x
 ```
 
-### Environment variables
+## Folder And File Naming
 
-You can also configure via environment variables:
+### Default Session Folder Pattern
 
-```bash
-export SRC_DIR="./source-images"
-export DST_DIR="./session-folders"
-export SESSION_GAP_MINUTES=60
-export PROMPT_SIMILARITY=0.8
-export SESSION_CLUSTER_LIMIT=100
-export SESSION_WORKERS=8
+The default session folder pattern is:
 
-uv run prompt-image-organizer -x
+```text
+{datetime}-session-{cluster_index:03d}-{count_padded}
 ```
 
-### Python API
+Example:
+
+```text
+20260313-1103-session-002-054
+```
+
+This keeps default naming neutral and avoids semantic interpretation of filenames.
+
+### Destination Layout
+
+Each session is placed under a date folder:
+
+```text
+YYYYMMDD/<session_folder>/
+```
+
+Example:
+
+```text
+20260313/20260313-1103-session-002-054/
+```
+
+### Moved File Names
+
+When files are actually moved, each image is renamed to:
+
+```text
+<md5-of-file-contents><original-extension>
+```
+
+Examples:
+
+```text
+63630146fe54c453e9d4ad0d98d0a5de.png
+63630146fe54c453e9d4ad0d98d0a5de-02.png
+```
+
+The `-02` suffix is only added when two files in the same destination would
+otherwise collide.
+
+### Aggregate `_all` Directory
+
+The top-level `_all/` directory contains symlinks to every moved image across
+all sessions. This gives you one flat directory for browsing or indexing while
+preserving the dated session structure underneath.
+
+## Configuration
+
+- `--gap MIN`: maximum time gap in minutes for batching images
+- `--sim F`: prompt similarity threshold from `0` to `1`
+- `--limit N`: maximum images per session when provided
+- `--workers N`: number of concurrent file moves
+- `--pattern P`: custom session folder pattern
+- `--cleanup-broken-links`: remove broken symlinks from `DST_DIR/_all`
+- `--backfill-all-links`: rebuild missing `_all` symlinks from existing sessions
+- `--open`: open the destination folder when processing succeeds
+- `--debug`: verbose logging
+- `-x`: actually move files; without this flag the tool performs a dry run
+
+Environment variables:
+
+- `SRC_DIR`
+- `DST_DIR`
+- `SESSION_GAP_MINUTES`
+- `PROMPT_SIMILARITY`
+- `SESSION_CLUSTER_LIMIT`
+- `SESSION_WORKERS`
+- `SESSION_FOLDER_PATTERN`
+
+## Custom Folder Patterns
+
+Patterns use Python `str.format` placeholders. Available values:
+
+- `date`: earliest image date as `YYYYMMDD`
+- `time`: earliest image time as `HHMM`
+- `datetime`: earliest image timestamp as `YYYYMMDD-HHMM`
+- `slug`: sanitized prompt slug
+- `base_slug`: sanitized slug without checksum
+- `count`: cluster size as an integer
+- `count_padded`: cluster size with zero padding
+- `cluster_index`: cluster number within the batch, starting at `1`
+- `batch_index`: batch number, starting at `1`
+- `checksum`: checksum suffix without the leading dash
+- `checksum_suffix`: checksum suffix including the leading dash when present
+
+For safety, folder pattern output must resolve to a single folder name. Absolute
+paths, separators, and traversal segments like `..` are rejected.
+
+## Python API
 
 ```python
-from prompt_image_organizer import (
-    scan_files,
-    group_by_time,
-    cluster_prompts,
-    process_clusters,
-    print_summary
-)
 from datetime import timedelta
 
-# Scan files
-file_data = scan_files("./images")
+from prompt_image_organizer import group_by_time, print_summary, process_clusters, scan_files
 
-# Group by time (60 minute gaps)
+file_data = scan_files("./images")
 batches = group_by_time(file_data, timedelta(minutes=60))
 
-# Process with custom config
 config = {
     "src_dir": "./images",
     "dst_dir": "./sessions",
@@ -112,141 +192,60 @@ config = {
     "sim_thresh": 0.8,
     "cluster_size_limit": None,
     "dry_run": True,
-    "workers": 8
+    "workers": 8,
+    "debug": False,
+    "folder_pattern": "{datetime}-session-{cluster_index:03d}-{count_padded}",
 }
 
 session_count, total_files, move_errors = process_clusters(batches, config)
 print_summary(session_count, total_files, move_errors, config["dry_run"])
 ```
 
-## Configuration
+## How It Works
 
-- **`--gap MIN`**: Maximum time gap in minutes to group images (default: 60)
-- **`--sim F`**: Prompt similarity threshold 0-1 (default: 0.8)
-- **`--limit N`**: Maximum images per session folder (default: unlimited)
-- **`--workers N`**: Number of concurrent file operations (default: 8)
-- **`--debug`**: Enable verbose logging of session details and file operations
-- **`-x`**: Actually move files (default: dry run)
-
-When you omit the destination argument and the `DST_DIR` environment variable,
-files are organized into `<SRC_DIR>/sessions` by default (for the default
-`SRC_DIR` of `.`, this resolves to `./sessions`).
-
-## How it works
-
-1. **Scans** your source directory for image files (.png, .jpg, .jpeg, .webp)
-2. **Extracts** prompts from filenames (removes numbering suffixes)
-3. **Groups** images by time gaps into batches
-4. **Clusters** each batch by prompt similarity
-5. **Creates** session folders with descriptive names
-6. **Moves** files into organized session structure
-
-## Session folder naming
-
-Session folders are named using the pattern:
-```
-YYYYMMDD-HHMM-slug-count/
-```
-
-- `YYYYMMDD-HHMM`: Timestamp of the earliest image in the cluster.
-- `slug`: Up to three meaningful prompt tokens (stopwords removed, max 18 chars).
-- `count`: Zero-padded file count (e.g., `007`).
-- If multiple clusters share the same timestamp and slug, a three-letter checksum
-  is inserted before the count: `YYYYMMDD-HHMM-slug-abc-007/`.
-
-Example: `20241201-1430-cat-sitting-chair-004/`
-
-Customize the naming pattern with `--pattern` or the `SESSION_FOLDER_PATTERN`
-environment variable. Patterns use Python `str.format` placeholders:
-
-- `date`: Earliest image date (`YYYYMMDD`)
-- `time`: Earliest image time (`HHMM`)
-- `datetime`: Combined timestamp (`YYYYMMDD-HHMM`)
-- `slug`: Sanitized prompt slug (checksum added automatically if needed)
-- `base_slug`: Sanitized slug without checksum
-- `count`: Cluster size as an integer
-- `count_padded`: Cluster size with zero padding (`003`)
-- `cluster_index`: Cluster number within the batch (1-based)
-- `batch_index`: Batch number (1-based)
-- `checksum`: Three-letter checksum, if applied
-- `checksum_suffix`: `-abc` when checksum is present, otherwise an empty string
-
-Default pattern: `{datetime}-{slug}{checksum_suffix}-{count_padded}`
-
-## File naming conventions
-
-The tool expects image files with prompts in the filename. It extracts the prompt by removing numbering suffixes:
-
-- `my_prompt_1.png` → prompt: `my_prompt`
-- `another_prompt_2.jpg` → prompt: `another_prompt`
-- `complex_prompt_with_spaces_3.webp` → prompt: `complex_prompt_with_spaces`
+1. Scans the source directory for image files (`.png`, `.jpg`, `.jpeg`, `.webp`)
+2. Extracts prompts from filenames for similarity clustering
+3. Groups nearby files into time batches
+4. Splits each batch into prompt-similar clusters
+5. Creates a dated session directory for each cluster
+6. On `-x`, moves files into those sessions with hash-based filenames
+7. Maintains `_all/` symlinks for every organized image
 
 ## Requirements
 
 - Python 3.12+
-- tqdm (for progress bars)
+- `tqdm` for progress bars
 
 ## Development
 
 ### Running Tests
 
 ```bash
-# Run all tests with unittest
-uv run python -m unittest discover tests -v
-
-# Run tests with pytest (if installed)
-uv run pytest tests/ -v
-
-# Run tests with coverage
-uv run pytest --cov=src/prompt_image_organizer tests/
+uv run pytest -q
 ```
 
 ### Code Quality
 
 ```bash
-# Format code with Black
 uv run black src/ tests/
-
-# Lint with Flake8
 uv run flake8 src/ tests/
-
-# Type checking with mypy
 uv run mypy src/
 ```
 
-### Test Structure
-
-- **`tests/test_utils.py`**: Unit tests for utility functions
-- **`tests/test_integration.py`**: Integration tests for full workflow
-- **`tests/test_cli.py`**: CLI and command line interface tests
-- **`tests/conftest.py`**: Pytest fixtures and configuration
-
-### Test Coverage
-
-The test suite covers:
-- ✅ Utility functions (sanitize_for_folder, extract_prompt, similar, etc.)
-- ✅ File operations (get_image_files, move_file_worker)
-- ✅ Time-based grouping (group_by_time)
-- ✅ Prompt clustering (cluster_prompts)
-- ✅ Configuration parsing (parse_config)
-- ✅ CLI functionality (argument parsing, help text)
-- ✅ Error handling (invalid inputs, permission errors)
-- ✅ Edge cases (empty directories, no images)
-- ✅ Full workflow (dry run and actual file movement)
-
 ## Project Structure
 
-```
+```text
 prompt-image-organizer/
 ├── src/prompt_image_organizer/
-│   ├── __init__.py          # Package entry point
-│   ├── __main__.py          # CLI entry point for python -m
-│   ├── core.py              # Core functionality
-│   └── cli.py               # Command-line interface
-├── tests/                   # Test suite
-├── examples/                # Usage examples
-├── pyproject.toml          # Project configuration
-└── README.md               # This file
+│   ├── __init__.py
+│   ├── __main__.py
+│   ├── cli.py
+│   └── core.py
+├── tests/
+├── examples/
+├── CHANGELOG.md
+├── pyproject.toml
+└── README.md
 ```
 
 ## License
