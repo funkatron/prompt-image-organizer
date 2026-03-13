@@ -1,5 +1,6 @@
 """Unit tests for utility functions."""
 
+import hashlib
 import unittest
 from unittest.mock import patch, MagicMock
 import tempfile
@@ -12,6 +13,7 @@ from prompt_image_organizer.core import (
     backfill_all_symlinks,
     build_folder_name,
     cleanup_broken_symlinks,
+    compute_file_md5,
     sanitize_for_folder,
     extract_prompt,
     similar,
@@ -119,6 +121,18 @@ class TestUtils(unittest.TestCase):
 
             # Test missing environment variable
             self.assertEqual(get_env_float('MISSING', 1.0), 1.0)
+
+    def test_compute_file_md5(self):
+        """MD5 hashes should be derived from file contents."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "image.png")
+            with open(path, "wb") as handle:
+                handle.write(b"example-bytes")
+
+            self.assertEqual(
+                compute_file_md5(path),
+                hashlib.md5(b"example-bytes").hexdigest(),
+            )
 
     def test_find_unique_folder_name(self):
         """Test unique folder name generation."""

@@ -1,5 +1,6 @@
 """Integration tests for the prompt-image-organizer."""
 
+import hashlib
 import io
 import os
 import re
@@ -58,7 +59,7 @@ class TestIntegration(unittest.TestCase):
         for filename, timestamp in test_files:
             filepath = os.path.join(self.src_dir, filename)
             with open(filepath, 'w') as f:
-                f.write("test image content")
+                f.write(filename)
 
             # Set the file modification time
             os.utime(filepath, (timestamp.timestamp(), timestamp.timestamp()))
@@ -280,6 +281,9 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(len(os.listdir(all_dir)), 7)
         for entry in os.listdir(all_dir):
             self.assertTrue(os.path.islink(os.path.join(all_dir, entry)))
+            stem, extension = os.path.splitext(entry)
+            self.assertEqual(extension, ".png")
+            self.assertRegex(stem, r"^[a-f0-9]{32}(?:-\d{2})?$")
 
     def test_custom_folder_pattern(self):
         """Ensure custom folder pattern is applied."""
@@ -298,7 +302,7 @@ class TestIntegration(unittest.TestCase):
         for filename, timestamp in files:
             path = os.path.join(custom_src, filename)
             with open(path, 'w') as handle:
-                handle.write("test content")
+                handle.write(filename)
             os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
 
         file_data = scan_files(custom_src)
@@ -345,7 +349,7 @@ class TestIntegration(unittest.TestCase):
         for filename, timestamp in files:
             path = os.path.join(custom_src, filename)
             with open(path, 'w') as handle:
-                handle.write("test content")
+                handle.write(filename)
             os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
 
         file_data = scan_files(custom_src)
@@ -417,9 +421,10 @@ class TestIntegration(unittest.TestCase):
             }
             process_clusters(batches, config)
 
+        expected_hash = hashlib.md5(b"test content").hexdigest()
         self.assertEqual(
             sorted(os.listdir(os.path.join(custom_dst, "_all"))),
-            ["shared_name_1-02.png", "shared_name_1.png"],
+            [f"{expected_hash}-02.png", f"{expected_hash}.png"],
         )
 
 

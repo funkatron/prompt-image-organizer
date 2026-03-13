@@ -161,7 +161,7 @@ def main() -> None:
             action = "Would create" if config["dry_run"] else "Created"
             print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
 
-    file_data = scan_files(config["src_dir"])
+    file_data = scan_files(config["src_dir"], debug=config["debug"])
     if not file_data:
         print(f"No image files found in {config['src_dir']}")
         if backfill_errors:

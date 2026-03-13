@@ -107,6 +107,18 @@ def prompt_checksum(prompt: str, attempt: int = 0) -> str:
     return encoded[:3]
 
 
+def compute_file_md5(path: str, chunk_size: int = 1024 * 1024) -> str:
+    """Compute the MD5 digest for a file."""
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_folder_name(pattern: str, values: Dict[str, Any]) -> str:
     """Format the session folder name using the provided pattern and values.
 
@@ -470,23 +482,39 @@ def move_file_worker(src: str, dst: str, session_folder: str, dry_run: bool) -> 
         return (src, dst, False, str(e))
 
 
-def scan_files(src_dir: str) -> List[Tuple[str, datetime, str]]:
+def scan_files(
+    src_dir: str,
+    debug: bool = False,
+    progress_every: int = 1000,
+) -> List[Tuple[str, datetime, str]]:
     """Scan source directory for image files and extract metadata.
 
     Args:
         src_dir: Source directory path
+        debug: If True, print periodic scan progress.
+        progress_every: Number of files between progress updates.
 
     Returns:
         List of (filename, mtime, prompt) tuples sorted by modification time
     """
+    if debug:
+        print(f"Scanning image files in {src_dir}...")
     files = get_image_files(src_dir)
+    if debug:
+        print(f"Found {len(files)} candidate image file(s). Reading timestamps...")
     file_data = []
-    for f in files:
+    for index, f in enumerate(files, start=1):
         path = os.path.join(src_dir, f)
         mtime = datetime.fromtimestamp(os.path.getmtime(path))
         prompt = extract_prompt(f)
         file_data.append((f, mtime, prompt))
+        if debug and (
+            index == len(files) or index % progress_every == 0
+        ):
+            print(f"  Scanned {index}/{len(files)} image file(s)")
     file_data.sort(key=lambda x: x[1])
+    if debug:
+        print("Finished scanning and sorting image files.")
     return file_data
 
 
@@ -594,9 +622,18 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                 print(f"\nSession {session_count+1}: {session_folder}")
 
             file_ops = []
+            reserved_session_names: set[str] = set()
             for f, _, _ in cluster:
                 src = os.path.join(config["src_dir"], f)
-                dst = os.path.join(session_folder, f)
+                extension = os.path.splitext(f)[1].lower()
+                hashed_name = f"{compute_file_md5(src)}{extension}"
+                target_name = find_unique_file_name(
+                    session_folder,
+                    hashed_name,
+                    reserved_session_names,
+                )
+                reserved_session_names.add(target_name)
+                dst = os.path.join(session_folder, target_name)
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
 
             results = []
