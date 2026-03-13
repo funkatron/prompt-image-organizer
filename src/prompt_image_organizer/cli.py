@@ -1,8 +1,9 @@
 """Command-line interface for prompt image organizer."""
 
-import os
-import sys
 import argparse
+import os
+import subprocess
+import sys
 from datetime import timedelta
 from typing import Dict, Any
 
@@ -41,6 +42,7 @@ Options:
                     Remove broken symlinks from DST_DIR/_all before processing
   --backfill-all-links
                     Rebuild missing `_all` symlinks from existing session folders
+  --open            Open the destination sessions folder when processing succeeds
   --debug           Enable verbose logging (shows session details and file operations)
   -x                Actually move files (default: dry run)
   -h, --help        Show this help message
@@ -79,6 +81,11 @@ def parse_config() -> Dict[str, Any]:
         action='store_true',
         help="Rebuild missing `_all` symlinks from existing session folders",
     )
+    parser.add_argument(
+        '--open',
+        action='store_true',
+        help="Open the destination sessions folder when processing succeeds",
+    )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
     parser.add_argument('-x', action='store_true', help="Actually move files")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
@@ -104,6 +111,7 @@ def parse_config() -> Dict[str, Any]:
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
     cleanup_broken_links = args.cleanup_broken_links
     backfill_all_links = args.backfill_all_links
+    open_when_done = args.open
 
     if gap_min < 0:
         parser.error("--gap must be greater than or equal to 0")
@@ -126,7 +134,20 @@ def parse_config() -> Dict[str, Any]:
         "folder_pattern": folder_pattern,
         "cleanup_broken_links": cleanup_broken_links,
         "backfill_all_links": backfill_all_links,
+        "open_when_done": open_when_done,
     }
+
+
+def open_directory(path: str) -> None:
+    """Open a directory in the platform file browser."""
+    if sys.platform == "darwin":
+        subprocess.run(["open", path], check=True)
+        return
+    if os.name == "nt":
+        os.startfile(path)
+        return
+
+    subprocess.run(["xdg-open", path], check=True)
 
 
 def main() -> None:
@@ -136,6 +157,7 @@ def main() -> None:
     if not os.path.exists(config["src_dir"]):
         print(f"ERROR: Source dir '{config['src_dir']}' not found.")
         sys.exit(1)
+        return
     os.makedirs(config["dst_dir"], exist_ok=True)
     all_dir = os.path.join(config["dst_dir"], "_all")
 
@@ -166,7 +188,11 @@ def main() -> None:
         print(f"No image files found in {config['src_dir']}")
         if backfill_errors:
             sys.exit(1)
+            return
+        if config["open_when_done"]:
+            open_directory(config["dst_dir"])
         sys.exit(0)
+        return
 
     batches = group_by_time(file_data, config["gap"])
     print(f"Found {len(batches)} batches (gap {config['gap'].total_seconds()/60:.0f} min, "
@@ -186,6 +212,8 @@ def main() -> None:
         move_errors + backfill_errors,
         config["dry_run"],
     )
+    if config["open_when_done"] and move_errors + backfill_errors == 0:
+        open_directory(config["dst_dir"])
 
 
 if __name__ == "__main__":

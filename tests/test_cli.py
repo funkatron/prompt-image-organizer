@@ -262,6 +262,12 @@ class TestCLI(unittest.TestCase):
             config = parse_config()
             self.assertTrue(config["backfill_all_links"])
 
+    def test_parse_config_open_flag(self):
+        """Opening the destination folder should be opt-in."""
+        with patch('sys.argv', ['script.py', '--open']):
+            config = parse_config()
+            self.assertTrue(config["open_when_done"])
+
     def test_main_function_basic(self):
         """Test main function with basic arguments."""
         # Create test directories
@@ -358,6 +364,22 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(len(os.listdir(src_dir)), 0)
             self.assertGreater(len(os.listdir(dst_dir)), 0)
 
+    def test_main_function_opens_destination_after_success(self):
+        """Successful runs should be able to open the destination folder."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(dst_dir, exist_ok=True)
+
+        test_file = os.path.join(src_dir, "test_image.png")
+        with open(test_file, 'w') as f:
+            f.write("test content")
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--open']), \
+             patch('prompt_image_organizer.cli.open_directory') as mock_open:
+            main()
+            mock_open.assert_called_once_with(dst_dir)
+
     def test_main_function_invalid_source(self):
         """Test main function with invalid source directory."""
         with patch('sys.argv', ['script.py', '/non/existent/dir', self.temp_dir]):
@@ -382,6 +404,20 @@ class TestCLI(unittest.TestCase):
         with patch('sys.argv', ['script.py', src_dir, dst_dir]), \
              patch('sys.exit') as mock_exit:
             main()
+            mock_exit.assert_called_with(0)
+
+    def test_main_function_no_images_can_open_destination(self):
+        """Open should still fire when there are no source images."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(dst_dir, exist_ok=True)
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--open']), \
+             patch('prompt_image_organizer.cli.open_directory') as mock_open, \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_open.assert_called_once_with(dst_dir)
             mock_exit.assert_called_with(0)
 
     def test_main_function_cleans_broken_links_without_images(self):
