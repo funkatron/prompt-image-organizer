@@ -351,6 +351,71 @@ def cleanup_broken_symlinks(
     return removed_count
 
 
+def backfill_all_symlinks(
+    dst_dir: str,
+    dry_run: bool,
+    debug: bool = False,
+) -> Tuple[int, int]:
+    """Populate `_all` symlinks from existing session folders.
+
+    Args:
+        dst_dir: Destination root containing dated session folders.
+        dry_run: If True, report work without mutating the filesystem.
+        debug: If True, print each symlink action.
+
+    Returns:
+        Tuple of (symlinks_created, symlink_errors).
+    """
+    all_dir = os.path.join(dst_dir, "_all")
+    reserved_link_names = {
+        entry for entry in os.listdir(all_dir)
+        if os.path.lexists(os.path.join(all_dir, entry))
+    } if os.path.isdir(all_dir) else set()
+
+    created_count = 0
+    error_count = 0
+
+    for date_entry in sorted(os.listdir(dst_dir)):
+        date_dir = os.path.join(dst_dir, date_entry)
+        if date_entry == "_all" or not os.path.isdir(date_dir):
+            continue
+        if not re.fullmatch(r"\d{8}", date_entry):
+            continue
+
+        for session_entry in sorted(os.listdir(date_dir)):
+            session_dir = os.path.join(date_dir, session_entry)
+            if not os.path.isdir(session_dir):
+                continue
+
+            for image_name in get_image_files(session_dir):
+                target_path = os.path.join(session_dir, image_name)
+                link_name = find_unique_file_name(
+                    all_dir,
+                    image_name,
+                    reserved_link_names,
+                )
+                reserved_link_names.add(link_name)
+                link_path, success, error = create_symlink(
+                    target_path,
+                    all_dir,
+                    link_name,
+                    dry_run,
+                )
+                if success:
+                    created_count += 1
+                    if debug:
+                        action = "LINK" if not dry_run else "WOULD LINK"
+                        print(f"  {action} {link_path} -> {target_path}")
+                    continue
+
+                error_count += 1
+                print(
+                    f"    ERROR: Could not create symlink {link_path} -> {target_path}: {error}"
+                )
+
+    return created_count, error_count
+
+
 def find_unique_folder_name(
     dst_dir: str,
     base_folder_name: str,

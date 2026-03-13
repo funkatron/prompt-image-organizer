@@ -3,6 +3,7 @@
 __version__ = "1.2.0"
 
 from .core import (
+    backfill_all_symlinks,
     DEFAULT_FOLDER_PATTERN,
     cleanup_broken_symlinks,
     get_env_int,
@@ -25,6 +26,7 @@ from .cli import parse_config, print_help, main
 __all__ = [
     "DEFAULT_FOLDER_PATTERN",
     "cleanup_broken_symlinks",
+    "backfill_all_symlinks",
     "get_env_int",
     "get_env_float",
     "sanitize_for_folder",

@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import Dict, Any
 
 from .core import (
+    backfill_all_symlinks,
     cleanup_broken_symlinks,
     get_env_int,
     get_env_float,
@@ -38,6 +39,8 @@ Options:
   --pattern P      Folder naming pattern (default: {datetime}-{slug}{checksum_suffix}-{count_padded})
   --cleanup-broken-links
                     Remove broken symlinks from DST_DIR/_all before processing
+  --backfill-all-links
+                    Rebuild missing `_all` symlinks from existing session folders
   --debug           Enable verbose logging (shows session details and file operations)
   -x                Actually move files (default: dry run)
   -h, --help        Show this help message
@@ -71,6 +74,11 @@ def parse_config() -> Dict[str, Any]:
         action='store_true',
         help="Remove broken symlinks from DST_DIR/_all before processing",
     )
+    parser.add_argument(
+        '--backfill-all-links',
+        action='store_true',
+        help="Rebuild missing `_all` symlinks from existing session folders",
+    )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
     parser.add_argument('-x', action='store_true', help="Actually move files")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
@@ -95,6 +103,7 @@ def parse_config() -> Dict[str, Any]:
     debug = args.debug
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
     cleanup_broken_links = args.cleanup_broken_links
+    backfill_all_links = args.backfill_all_links
 
     if gap_min < 0:
         parser.error("--gap must be greater than or equal to 0")
@@ -116,6 +125,7 @@ def parse_config() -> Dict[str, Any]:
         "debug": debug,
         "folder_pattern": folder_pattern,
         "cleanup_broken_links": cleanup_broken_links,
+        "backfill_all_links": backfill_all_links,
     }
 
 
@@ -139,9 +149,23 @@ def main() -> None:
             action = "Would remove" if config["dry_run"] else "Removed"
             print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
 
+    backfilled_links = 0
+    backfill_errors = 0
+    if config["backfill_all_links"]:
+        backfilled_links, backfill_errors = backfill_all_symlinks(
+            config["dst_dir"],
+            config["dry_run"],
+            config["debug"],
+        )
+        if backfilled_links:
+            action = "Would create" if config["dry_run"] else "Created"
+            print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
+
     file_data = scan_files(config["src_dir"])
     if not file_data:
         print(f"No image files found in {config['src_dir']}")
+        if backfill_errors:
+            sys.exit(1)
         sys.exit(0)
 
     batches = group_by_time(file_data, config["gap"])
@@ -156,7 +180,12 @@ def main() -> None:
         print("Note: tqdm not found; progress bars disabled. Install with 'pip install tqdm' for better UX.")
 
     session_count, total_files, move_errors = process_clusters(batches, config)
-    print_summary(session_count, total_files, move_errors, config["dry_run"])
+    print_summary(
+        session_count,
+        total_files,
+        move_errors + backfill_errors,
+        config["dry_run"],
+    )
 
 
 if __name__ == "__main__":

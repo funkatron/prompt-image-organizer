@@ -110,6 +110,7 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(config["workers"], 4)
             self.assertEqual(config["folder_pattern"], f"{DEFAULT_FOLDER_PATTERN}")
             self.assertTrue(config["cleanup_broken_links"])
+            self.assertFalse(config["backfill_all_links"])
 
     def test_parse_config_invalid_gap(self):
         """Test configuration parsing with invalid gap value."""
@@ -253,6 +254,13 @@ class TestCLI(unittest.TestCase):
         with patch('sys.argv', ['script.py']):
             config = parse_config()
             self.assertFalse(config["cleanup_broken_links"])
+            self.assertFalse(config["backfill_all_links"])
+
+    def test_parse_config_backfill_all_links_flag(self):
+        """Backfill should be opt-in."""
+        with patch('sys.argv', ['script.py', '--backfill-all-links']):
+            config = parse_config()
+            self.assertTrue(config["backfill_all_links"])
 
     def test_main_function_basic(self):
         """Test main function with basic arguments."""
@@ -392,6 +400,26 @@ class TestCLI(unittest.TestCase):
             mock_exit.assert_called_with(0)
 
         self.assertFalse(os.path.lexists(broken_link))
+
+    def test_main_function_backfills_all_links_without_images(self):
+        """Backfill should run against existing sessions even without new inputs."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        session_dir = os.path.join(dst_dir, "20240101", "session-one")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(session_dir, exist_ok=True)
+
+        image_path = os.path.join(session_dir, "image.png")
+        with open(image_path, 'w') as handle:
+            handle.write("test")
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--backfill-all-links', '-x']), \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        link_path = os.path.join(dst_dir, "_all", "image.png")
+        self.assertTrue(os.path.islink(link_path))
 
 
 if __name__ == '__main__':

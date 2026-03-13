@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 # Import the functions we want to test
 from prompt_image_organizer.core import (
+    backfill_all_symlinks,
     build_folder_name,
     cleanup_broken_symlinks,
     sanitize_for_folder,
@@ -187,6 +188,48 @@ class TestUtils(unittest.TestCase):
 
             self.assertEqual(removed_count, 1)
             self.assertTrue(os.path.islink(broken_link))
+
+    def test_backfill_all_symlinks_creates_links_from_existing_sessions(self):
+        """Backfill should populate `_all` from dated session folders."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_one = os.path.join(temp_dir, "20240101", "session-one")
+            session_two = os.path.join(temp_dir, "20240102", "session-two")
+            os.makedirs(session_one, exist_ok=True)
+            os.makedirs(session_two, exist_ok=True)
+
+            first_image = os.path.join(session_one, "shared.png")
+            second_image = os.path.join(session_two, "shared.png")
+            with open(first_image, 'w') as handle:
+                handle.write("one")
+            with open(second_image, 'w') as handle:
+                handle.write("two")
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=False,
+            )
+
+            self.assertEqual(created_count, 2)
+            self.assertEqual(error_count, 0)
+            all_entries = sorted(os.listdir(os.path.join(temp_dir, "_all")))
+            self.assertEqual(all_entries, ["shared-02.png", "shared.png"])
+
+    def test_backfill_all_symlinks_dry_run_does_not_mutate(self):
+        """Dry-run backfill should report work without creating links."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_dir = os.path.join(temp_dir, "20240101", "session-one")
+            os.makedirs(session_dir, exist_ok=True)
+            with open(os.path.join(session_dir, "image.png"), 'w') as handle:
+                handle.write("one")
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=True,
+            )
+
+            self.assertEqual(created_count, 1)
+            self.assertEqual(error_count, 0)
+            self.assertFalse(os.path.exists(os.path.join(temp_dir, "_all")))
 
 
 class TestFileOperations(unittest.TestCase):
