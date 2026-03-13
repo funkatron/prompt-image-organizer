@@ -96,6 +96,7 @@ class TestCLI(unittest.TestCase):
             '--sim', '0.9',
             '--limit', '50',
             '--workers', '4',
+            '--cleanup-broken-links',
             '-x'
         ]):
             config = parse_config()
@@ -108,6 +109,8 @@ class TestCLI(unittest.TestCase):
             self.assertFalse(config["dry_run"])
             self.assertEqual(config["workers"], 4)
             self.assertEqual(config["folder_pattern"], f"{DEFAULT_FOLDER_PATTERN}")
+            self.assertTrue(config["cleanup_broken_links"])
+            self.assertFalse(config["backfill_all_links"])
 
     def test_parse_config_invalid_gap(self):
         """Test configuration parsing with invalid gap value."""
@@ -130,6 +133,42 @@ class TestCLI(unittest.TestCase):
     def test_parse_config_invalid_workers(self):
         """Test configuration parsing with invalid workers value."""
         with patch('sys.argv', ['script.py', '--workers', 'invalid']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_negative_gap(self):
+        """Gap must be greater than or equal to zero."""
+        with patch('sys.argv', ['script.py', '--gap', '-1']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_sim_below_zero(self):
+        """Similarity must stay within the inclusive range."""
+        with patch('sys.argv', ['script.py', '--sim', '-0.1']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_sim_above_one(self):
+        """Similarity must stay within the inclusive range."""
+        with patch('sys.argv', ['script.py', '--sim', '1.1']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_zero_limit(self):
+        """Cluster limit must be a positive integer when provided."""
+        with patch('sys.argv', ['script.py', '--limit', '0']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_negative_limit(self):
+        """Cluster limit must be a positive integer when provided."""
+        with patch('sys.argv', ['script.py', '--limit', '-5']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_zero_workers(self):
+        """Workers must be at least one."""
+        with patch('sys.argv', ['script.py', '--workers', '0']):
             with self.assertRaises(SystemExit):
                 parse_config()
 
@@ -209,6 +248,25 @@ class TestCLI(unittest.TestCase):
         with patch('sys.argv', ['script.py']), patch.dict(os.environ, env_vars):
             config = parse_config()
             self.assertEqual(config["folder_pattern"], '{datetime}_{slug}')
+
+    def test_parse_config_cleanup_broken_links_default_false(self):
+        """Broken link cleanup should be opt-in."""
+        with patch('sys.argv', ['script.py']):
+            config = parse_config()
+            self.assertFalse(config["cleanup_broken_links"])
+            self.assertFalse(config["backfill_all_links"])
+
+    def test_parse_config_backfill_all_links_flag(self):
+        """Backfill should be opt-in."""
+        with patch('sys.argv', ['script.py', '--backfill-all-links']):
+            config = parse_config()
+            self.assertTrue(config["backfill_all_links"])
+
+    def test_parse_config_open_flag(self):
+        """Opening the destination folder should be opt-in."""
+        with patch('sys.argv', ['script.py', '--open']):
+            config = parse_config()
+            self.assertTrue(config["open_when_done"])
 
     def test_main_function_basic(self):
         """Test main function with basic arguments."""
@@ -306,6 +364,22 @@ class TestCLI(unittest.TestCase):
             self.assertEqual(len(os.listdir(src_dir)), 0)
             self.assertGreater(len(os.listdir(dst_dir)), 0)
 
+    def test_main_function_opens_destination_after_success(self):
+        """Successful runs should be able to open the destination folder."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(dst_dir, exist_ok=True)
+
+        test_file = os.path.join(src_dir, "test_image.png")
+        with open(test_file, 'w') as f:
+            f.write("test content")
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--open']), \
+             patch('prompt_image_organizer.cli.open_directory') as mock_open:
+            main()
+            mock_open.assert_called_once_with(dst_dir)
+
     def test_main_function_invalid_source(self):
         """Test main function with invalid source directory."""
         with patch('sys.argv', ['script.py', '/non/existent/dir', self.temp_dir]):
@@ -331,6 +405,57 @@ class TestCLI(unittest.TestCase):
              patch('sys.exit') as mock_exit:
             main()
             mock_exit.assert_called_with(0)
+
+    def test_main_function_no_images_can_open_destination(self):
+        """Open should still fire when there are no source images."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(dst_dir, exist_ok=True)
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--open']), \
+             patch('prompt_image_organizer.cli.open_directory') as mock_open, \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_open.assert_called_once_with(dst_dir)
+            mock_exit.assert_called_with(0)
+
+    def test_main_function_cleans_broken_links_without_images(self):
+        """Cleanup should still run even when there are no source images."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        all_dir = os.path.join(dst_dir, "_all")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(all_dir, exist_ok=True)
+        broken_link = os.path.join(all_dir, "missing.png")
+        os.symlink(os.path.join(dst_dir, "missing.png"), broken_link)
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--cleanup-broken-links', '-x']), \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        self.assertFalse(os.path.lexists(broken_link))
+
+    def test_main_function_backfills_all_links_without_images(self):
+        """Backfill should run against existing sessions even without new inputs."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        session_dir = os.path.join(dst_dir, "20240101", "session-one")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(session_dir, exist_ok=True)
+
+        image_path = os.path.join(session_dir, "image.png")
+        with open(image_path, 'w') as handle:
+            handle.write("test")
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--backfill-all-links', '-x']), \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        link_path = os.path.join(dst_dir, "_all", "image.png")
+        self.assertTrue(os.path.islink(link_path))
 
 
 if __name__ == '__main__':

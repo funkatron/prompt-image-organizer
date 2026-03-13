@@ -1,12 +1,15 @@
 """Command-line interface for prompt image organizer."""
 
-import os
-import sys
 import argparse
+import os
+import subprocess
+import sys
 from datetime import timedelta
 from typing import Dict, Any
 
 from .core import (
+    backfill_all_symlinks,
+    cleanup_broken_symlinks,
     get_env_int,
     get_env_float,
     scan_files,
@@ -35,6 +38,11 @@ Options:
   --limit N         Maximum cluster (session) size [env: SESSION_CLUSTER_LIMIT, default: unlimited]
   --workers N       Number of concurrent file moves (default: 8)
   --pattern P      Folder naming pattern (default: {datetime}-{slug}{checksum_suffix}-{count_padded})
+  --cleanup-broken-links
+                    Remove broken symlinks from DST_DIR/_all before processing
+  --backfill-all-links
+                    Rebuild missing `_all` symlinks from existing session folders
+  --open            Open the destination sessions folder when processing succeeds
   --debug           Enable verbose logging (shows session details and file operations)
   -x                Actually move files (default: dry run)
   -h, --help        Show this help message
@@ -63,6 +71,21 @@ def parse_config() -> Dict[str, Any]:
         '--pattern',
         help=f"Folder naming pattern (default: {DEFAULT_FOLDER_PATTERN})"
     )
+    parser.add_argument(
+        '--cleanup-broken-links',
+        action='store_true',
+        help="Remove broken symlinks from DST_DIR/_all before processing",
+    )
+    parser.add_argument(
+        '--backfill-all-links',
+        action='store_true',
+        help="Rebuild missing `_all` symlinks from existing session folders",
+    )
+    parser.add_argument(
+        '--open',
+        action='store_true',
+        help="Open the destination sessions folder when processing succeeds",
+    )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
     parser.add_argument('-x', action='store_true', help="Actually move files")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
@@ -86,6 +109,19 @@ def parse_config() -> Dict[str, Any]:
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
     debug = args.debug
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
+    cleanup_broken_links = args.cleanup_broken_links
+    backfill_all_links = args.backfill_all_links
+    open_when_done = args.open
+
+    if gap_min < 0:
+        parser.error("--gap must be greater than or equal to 0")
+    if not 0 <= sim_thresh <= 1:
+        parser.error("--sim must be between 0 and 1 inclusive")
+    if cluster_size_limit is not None and cluster_size_limit <= 0:
+        parser.error("--limit must be greater than 0")
+    if workers < 1:
+        parser.error("--workers must be greater than or equal to 1")
+
     return {
         "src_dir": src_dir,
         "dst_dir": dst_dir,
@@ -96,7 +132,22 @@ def parse_config() -> Dict[str, Any]:
         "workers": workers,
         "debug": debug,
         "folder_pattern": folder_pattern,
+        "cleanup_broken_links": cleanup_broken_links,
+        "backfill_all_links": backfill_all_links,
+        "open_when_done": open_when_done,
     }
+
+
+def open_directory(path: str) -> None:
+    """Open a directory in the platform file browser."""
+    if sys.platform == "darwin":
+        subprocess.run(["open", path], check=True)
+        return
+    if os.name == "nt":
+        os.startfile(path)
+        return
+
+    subprocess.run(["xdg-open", path], check=True)
 
 
 def main() -> None:
@@ -106,12 +157,42 @@ def main() -> None:
     if not os.path.exists(config["src_dir"]):
         print(f"ERROR: Source dir '{config['src_dir']}' not found.")
         sys.exit(1)
+        return
     os.makedirs(config["dst_dir"], exist_ok=True)
+    all_dir = os.path.join(config["dst_dir"], "_all")
 
-    file_data = scan_files(config["src_dir"])
+    if config["cleanup_broken_links"]:
+        removed_count = cleanup_broken_symlinks(
+            all_dir,
+            config["dry_run"],
+            config["debug"],
+        )
+        if removed_count:
+            action = "Would remove" if config["dry_run"] else "Removed"
+            print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
+
+    backfilled_links = 0
+    backfill_errors = 0
+    if config["backfill_all_links"]:
+        backfilled_links, backfill_errors = backfill_all_symlinks(
+            config["dst_dir"],
+            config["dry_run"],
+            config["debug"],
+        )
+        if backfilled_links:
+            action = "Would create" if config["dry_run"] else "Created"
+            print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
+
+    file_data = scan_files(config["src_dir"], debug=config["debug"])
     if not file_data:
         print(f"No image files found in {config['src_dir']}")
+        if backfill_errors:
+            sys.exit(1)
+            return
+        if config["open_when_done"]:
+            open_directory(config["dst_dir"])
         sys.exit(0)
+        return
 
     batches = group_by_time(file_data, config["gap"])
     print(f"Found {len(batches)} batches (gap {config['gap'].total_seconds()/60:.0f} min, "
@@ -121,13 +202,18 @@ def main() -> None:
 
     try:
         from tqdm import tqdm
-        tqdm_available = True
     except ImportError:
-        tqdm_available = False
         print("Note: tqdm not found; progress bars disabled. Install with 'pip install tqdm' for better UX.")
 
     session_count, total_files, move_errors = process_clusters(batches, config)
-    print_summary(session_count, total_files, move_errors, config["dry_run"])
+    print_summary(
+        session_count,
+        total_files,
+        move_errors + backfill_errors,
+        config["dry_run"],
+    )
+    if config["open_when_done"] and move_errors + backfill_errors == 0:
+        open_directory(config["dst_dir"])
 
 
 if __name__ == "__main__":

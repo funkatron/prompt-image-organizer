@@ -1,5 +1,7 @@
 """Integration tests for the prompt-image-organizer."""
 
+import hashlib
+import io
 import os
 import re
 import shutil
@@ -57,7 +59,7 @@ class TestIntegration(unittest.TestCase):
         for filename, timestamp in test_files:
             filepath = os.path.join(self.src_dir, filename)
             with open(filepath, 'w') as f:
-                f.write("test image content")
+                f.write(filename)
 
             # Set the file modification time
             os.utime(filepath, (timestamp.timestamp(), timestamp.timestamp()))
@@ -258,14 +260,30 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(total_files, 7)  # All test files
         self.assertEqual(move_errors, 0)  # No errors
 
-        # Files should have been moved to session folders
+        # Files should have been moved to per-day session folders
         self.assertEqual(len(os.listdir(self.src_dir)), 0)  # Source should be empty
-        self.assertGreater(len(os.listdir(self.dst_dir)), 0)  # Destination should have session folders
+        self.assertGreater(len(os.listdir(self.dst_dir)), 0)
 
-        # Check that session folders were created
-        pattern = re.compile(r"^\d{8}-\d{4}-[a-z0-9\-]+-\d{3}(?:-\d{2})?$")
-        session_folders = [d for d in os.listdir(self.dst_dir) if pattern.match(d)]
+        # Check that date folders and session folders were created
+        date_pattern = re.compile(r"^\d{8}$")
+        pattern = re.compile(r"^\d{8}-\d{4}-session-\d{3}-\d{3}(?:-\d{2})?$")
+        date_folders = [d for d in os.listdir(self.dst_dir) if date_pattern.match(d)]
+        self.assertGreater(len(date_folders), 0)
+        session_folders = []
+        for date_folder in date_folders:
+            session_folders.extend(
+                d for d in os.listdir(os.path.join(self.dst_dir, date_folder))
+                if pattern.match(d)
+            )
         self.assertGreater(len(session_folders), 0)
+        all_dir = os.path.join(self.dst_dir, "_all")
+        self.assertTrue(os.path.isdir(all_dir))
+        self.assertEqual(len(os.listdir(all_dir)), 7)
+        for entry in os.listdir(all_dir):
+            self.assertTrue(os.path.islink(os.path.join(all_dir, entry)))
+            stem, extension = os.path.splitext(entry)
+            self.assertEqual(extension, ".png")
+            self.assertRegex(stem, r"^[a-f0-9]{32}(?:-\d{2})?$")
 
     def test_custom_folder_pattern(self):
         """Ensure custom folder pattern is applied."""
@@ -284,7 +302,7 @@ class TestIntegration(unittest.TestCase):
         for filename, timestamp in files:
             path = os.path.join(custom_src, filename)
             with open(path, 'w') as handle:
-                handle.write("test content")
+                handle.write(filename)
             os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
 
         file_data = scan_files(custom_src)
@@ -304,10 +322,109 @@ class TestIntegration(unittest.TestCase):
 
         process_clusters(batches, config)
 
-        folders = sorted(os.listdir(custom_dst))
+        folders = sorted(os.listdir(os.path.join(custom_dst, "20240101")))
         self.assertEqual(
             folders,
             ["20240101_abstract-shape_001", "20240101_prompt-one_002"],
+        )
+        self.assertEqual(len(os.listdir(os.path.join(custom_dst, "_all"))), 3)
+
+    def test_dry_run_and_actual_move_use_same_reserved_folder_names(self):
+        """Dry run should reserve names exactly as an actual run would."""
+        custom_src = os.path.join(self.test_dir, "collision_src")
+        dry_run_dst = os.path.join(self.test_dir, "collision_dry_run_dst")
+        actual_dst = os.path.join(self.test_dir, "collision_actual_dst")
+        os.makedirs(custom_src, exist_ok=True)
+        os.makedirs(dry_run_dst, exist_ok=True)
+        os.makedirs(actual_dst, exist_ok=True)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        files = [
+            ("cat_portrait_1.png", base_time),
+            ("cat_portrait_2.png", base_time + timedelta(minutes=5)),
+            ("dog_portrait_1.png", base_time + timedelta(hours=2)),
+            ("dog_portrait_2.png", base_time + timedelta(hours=2, minutes=5)),
+        ]
+
+        for filename, timestamp in files:
+            path = os.path.join(custom_src, filename)
+            with open(path, 'w') as handle:
+                handle.write(filename)
+            os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
+
+        file_data = scan_files(custom_src)
+        batches = group_by_time(file_data, timedelta(minutes=60))
+
+        dry_run_config = {
+            "src_dir": custom_src,
+            "dst_dir": dry_run_dst,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": True,
+            "workers": 1,
+            "debug": True,
+            "folder_pattern": "{date}",
+        }
+        actual_config = dict(dry_run_config)
+        actual_config["dst_dir"] = actual_dst
+        actual_config["dry_run"] = False
+
+        with patch("sys.stdout", new=io.StringIO()) as dry_run_stdout:
+            process_clusters(batches, dry_run_config)
+        self.assertIn(os.path.join("20240101", "20240101"), dry_run_stdout.getvalue())
+        self.assertIn(os.path.join("20240101", "20240101-02"), dry_run_stdout.getvalue())
+
+        process_clusters(batches, actual_config)
+        self.assertEqual(sorted(os.listdir(actual_dst)), ["20240101", "_all"])
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(actual_dst, "20240101"))),
+            ["20240101", "20240101-02"],
+        )
+        self.assertEqual(len(os.listdir(os.path.join(actual_dst, "_all"))), 4)
+
+    def test_all_symlinks_handle_duplicate_file_names(self):
+        """The aggregate directory should keep unique symlink names."""
+        custom_src = os.path.join(self.test_dir, "dupe_src")
+        custom_dst = os.path.join(self.test_dir, "dupe_dst")
+        os.makedirs(custom_src, exist_ok=True)
+        os.makedirs(custom_dst, exist_ok=True)
+
+        day_one = datetime(2024, 1, 1, 12, 0, 0)
+        day_two = datetime(2024, 1, 2, 12, 0, 0)
+        files = [
+            ("shared_name_1.png", day_one),
+            ("shared_name_1.png", day_two),
+        ]
+
+        for index, (filename, timestamp) in enumerate(files, start=1):
+            day_dir = os.path.join(custom_src, f"input_{index}")
+            os.makedirs(day_dir, exist_ok=True)
+            path = os.path.join(day_dir, filename)
+            with open(path, 'w') as handle:
+                handle.write("test content")
+            os.utime(path, (timestamp.timestamp(), timestamp.timestamp()))
+
+        for index in range(1, 3):
+            file_data = scan_files(os.path.join(custom_src, f"input_{index}"))
+            batches = group_by_time(file_data, timedelta(minutes=60))
+            config = {
+                "src_dir": os.path.join(custom_src, f"input_{index}"),
+                "dst_dir": custom_dst,
+                "gap": timedelta(minutes=60),
+                "sim_thresh": 0.8,
+                "cluster_size_limit": None,
+                "dry_run": False,
+                "workers": 1,
+                "debug": False,
+                "folder_pattern": "{datetime}-{slug}{checksum_suffix}-{count_padded}",
+            }
+            process_clusters(batches, config)
+
+        expected_hash = hashlib.md5(b"test content").hexdigest()
+        self.assertEqual(
+            sorted(os.listdir(os.path.join(custom_dst, "_all"))),
+            [f"{expected_hash}-02.png", f"{expected_hash}.png"],
         )
 
 

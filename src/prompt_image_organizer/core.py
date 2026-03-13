@@ -33,7 +33,7 @@ STOPWORDS: set[str] = {
     "with",
 }
 
-DEFAULT_FOLDER_PATTERN = "{datetime}-{slug}{checksum_suffix}-{count_padded}"
+DEFAULT_FOLDER_PATTERN = "{datetime}-session-{cluster_index:03d}-{count_padded}"
 
 
 def get_env_int(name: str, default: int) -> int:
@@ -107,6 +107,18 @@ def prompt_checksum(prompt: str, attempt: int = 0) -> str:
     return encoded[:3]
 
 
+def compute_file_md5(path: str, chunk_size: int = 1024 * 1024) -> str:
+    """Compute the MD5 digest for a file."""
+    digest = hashlib.md5()
+    with open(path, "rb") as handle:
+        while True:
+            chunk = handle.read(chunk_size)
+            if not chunk:
+                break
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
 def build_folder_name(pattern: str, values: Dict[str, Any]) -> str:
     """Format the session folder name using the provided pattern and values.
 
@@ -137,7 +149,27 @@ def build_folder_name(pattern: str, values: Dict[str, Any]) -> str:
     if not folder_name:
         raise ValueError("Folder pattern produced an empty name.")
 
+    if os.path.isabs(folder_name):
+        raise ValueError("Folder pattern must not produce an absolute path.")
+
+    if os.sep in folder_name or (os.altsep and os.altsep in folder_name):
+        raise ValueError(
+            "Folder pattern must produce a single folder name without path separators."
+        )
+
+    path_parts = pathlib_split(folder_name)
+    if any(part == ".." for part in path_parts):
+        raise ValueError("Folder pattern must not contain parent directory segments.")
+
     return folder_name
+
+
+def pathlib_split(path: str) -> List[str]:
+    """Split a relative path into normalized components."""
+    normalized = os.path.normpath(path)
+    if normalized == ".":
+        return []
+    return normalized.split(os.sep)
 
 
 def get_image_files(src_dir: str) -> List[str]:
@@ -237,7 +269,183 @@ def cluster_prompts(batch: List[Tuple[str, datetime, str]], threshold: float = 0
     return clusters
 
 
-def find_unique_folder_name(dst_dir: str, base_folder_name: str) -> str:
+def validate_session_folder_path(dst_dir: str, folder_name: str) -> str:
+    """Validate that a folder name resolves under the destination directory."""
+    destination_root = os.path.abspath(dst_dir)
+    session_folder = os.path.abspath(os.path.join(destination_root, folder_name))
+
+    if os.path.commonpath([destination_root, session_folder]) != destination_root:
+        raise ValueError(
+            "Folder pattern must resolve within the destination directory."
+        )
+
+    return session_folder
+
+
+def find_unique_file_name(
+    dst_dir: str,
+    base_file_name: str,
+    reserved_names: Optional[set[str]] = None,
+) -> str:
+    """Find a unique file name by appending numeric suffixes when required."""
+    reserved_names = reserved_names or set()
+    if (
+        base_file_name not in reserved_names
+        and not os.path.lexists(os.path.join(dst_dir, base_file_name))
+    ):
+        return base_file_name
+
+    stem, extension = os.path.splitext(base_file_name)
+    counter = 2
+    while True:
+        candidate = f"{stem}-{counter:02d}{extension}"
+        if (
+            candidate not in reserved_names
+            and not os.path.lexists(os.path.join(dst_dir, candidate))
+        ):
+            return candidate
+        counter += 1
+
+
+def create_symlink(
+    target_path: str,
+    symlink_dir: str,
+    link_name: str,
+    dry_run: bool,
+) -> Tuple[str, bool, Optional[str]]:
+    """Create a symlink inside the aggregate directory."""
+    link_path = os.path.join(symlink_dir, link_name)
+    if dry_run:
+        return (link_path, True, None)
+
+    try:
+        os.makedirs(symlink_dir, exist_ok=True)
+        relative_target = os.path.relpath(target_path, symlink_dir)
+        os.symlink(relative_target, link_path)
+        return (link_path, True, None)
+    except Exception as exc:
+        return (link_path, False, str(exc))
+
+
+def cleanup_broken_symlinks(
+    symlink_dir: str,
+    dry_run: bool,
+    debug: bool = False,
+) -> int:
+    """Remove broken symlinks from the aggregate directory.
+
+    Args:
+        symlink_dir: Directory containing aggregate symlinks.
+        dry_run: If True, report removals without mutating the filesystem.
+        debug: If True, print each broken symlink encountered.
+
+    Returns:
+        Number of broken symlinks found.
+    """
+    if not os.path.isdir(symlink_dir):
+        return 0
+
+    removed_count = 0
+    for entry in sorted(os.listdir(symlink_dir)):
+        link_path = os.path.join(symlink_dir, entry)
+        if not os.path.islink(link_path):
+            continue
+        if os.path.exists(link_path):
+            continue
+
+        removed_count += 1
+        if debug:
+            action = "REMOVE" if not dry_run else "WOULD REMOVE"
+            print(f"  {action} broken symlink {link_path}")
+        if not dry_run:
+            os.unlink(link_path)
+
+    return removed_count
+
+
+def backfill_all_symlinks(
+    dst_dir: str,
+    dry_run: bool,
+    debug: bool = False,
+) -> Tuple[int, int]:
+    """Populate `_all` symlinks from existing session folders.
+
+    Args:
+        dst_dir: Destination root containing dated session folders.
+        dry_run: If True, report work without mutating the filesystem.
+        debug: If True, print each symlink action.
+
+    Returns:
+        Tuple of (symlinks_created, symlink_errors).
+    """
+    all_dir = os.path.join(dst_dir, "_all")
+    reserved_link_names = {
+        entry for entry in os.listdir(all_dir)
+        if os.path.lexists(os.path.join(all_dir, entry))
+    } if os.path.isdir(all_dir) else set()
+    linked_targets = {
+        os.path.realpath(os.path.join(all_dir, entry))
+        for entry in reserved_link_names
+        if os.path.islink(os.path.join(all_dir, entry))
+        and os.path.exists(os.path.join(all_dir, entry))
+    }
+
+    created_count = 0
+    error_count = 0
+
+    for date_entry in sorted(os.listdir(dst_dir)):
+        date_dir = os.path.join(dst_dir, date_entry)
+        if date_entry == "_all" or not os.path.isdir(date_dir):
+            continue
+        if not re.fullmatch(r"\d{8}", date_entry):
+            continue
+
+        for session_entry in sorted(os.listdir(date_dir)):
+            session_dir = os.path.join(date_dir, session_entry)
+            if not os.path.isdir(session_dir):
+                continue
+
+            for image_name in get_image_files(session_dir):
+                target_path = os.path.join(session_dir, image_name)
+                resolved_target = os.path.realpath(target_path)
+                if resolved_target in linked_targets:
+                    if debug:
+                        print(f"  SKIP existing symlink for {target_path}")
+                    continue
+
+                link_name = find_unique_file_name(
+                    all_dir,
+                    image_name,
+                    reserved_link_names,
+                )
+                reserved_link_names.add(link_name)
+                link_path, success, error = create_symlink(
+                    target_path,
+                    all_dir,
+                    link_name,
+                    dry_run,
+                )
+                if success:
+                    created_count += 1
+                    linked_targets.add(resolved_target)
+                    if debug:
+                        action = "LINK" if not dry_run else "WOULD LINK"
+                        print(f"  {action} {link_path} -> {target_path}")
+                    continue
+
+                error_count += 1
+                print(
+                    f"    ERROR: Could not create symlink {link_path} -> {target_path}: {error}"
+                )
+
+    return created_count, error_count
+
+
+def find_unique_folder_name(
+    dst_dir: str,
+    base_folder_name: str,
+    reserved_names: Optional[set[str]] = None,
+) -> str:
     """Find a unique folder name by appending numeric suffixes when required.
 
     Args:
@@ -247,13 +455,20 @@ def find_unique_folder_name(dst_dir: str, base_folder_name: str) -> str:
     Returns:
         Folder name that does not exist on disk.
     """
-    if not os.path.exists(os.path.join(dst_dir, base_folder_name)):
+    reserved_names = reserved_names or set()
+    if (
+        base_folder_name not in reserved_names
+        and not os.path.exists(os.path.join(dst_dir, base_folder_name))
+    ):
         return base_folder_name
 
     counter = 2
     while True:
         candidate = f"{base_folder_name}-{counter:02d}"
-        if not os.path.exists(os.path.join(dst_dir, candidate)):
+        if (
+            candidate not in reserved_names
+            and not os.path.exists(os.path.join(dst_dir, candidate))
+        ):
             return candidate
         counter += 1
 
@@ -280,23 +495,39 @@ def move_file_worker(src: str, dst: str, session_folder: str, dry_run: bool) -> 
         return (src, dst, False, str(e))
 
 
-def scan_files(src_dir: str) -> List[Tuple[str, datetime, str]]:
+def scan_files(
+    src_dir: str,
+    debug: bool = False,
+    progress_every: int = 1000,
+) -> List[Tuple[str, datetime, str]]:
     """Scan source directory for image files and extract metadata.
 
     Args:
         src_dir: Source directory path
+        debug: If True, print periodic scan progress.
+        progress_every: Number of files between progress updates.
 
     Returns:
         List of (filename, mtime, prompt) tuples sorted by modification time
     """
+    if debug:
+        print(f"Scanning image files in {src_dir}...")
     files = get_image_files(src_dir)
+    if debug:
+        print(f"Found {len(files)} candidate image file(s). Reading timestamps...")
     file_data = []
-    for f in files:
+    for index, f in enumerate(files, start=1):
         path = os.path.join(src_dir, f)
         mtime = datetime.fromtimestamp(os.path.getmtime(path))
         prompt = extract_prompt(f)
         file_data.append((f, mtime, prompt))
+        if debug and (
+            index == len(files) or index % progress_every == 0
+        ):
+            print(f"  Scanned {index}/{len(files)} image file(s)")
     file_data.sort(key=lambda x: x[1])
+    if debug:
+        print("Finished scanning and sorting image files.")
     return file_data
 
 
@@ -315,7 +546,10 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
     move_errors = 0
     base_slug_tracker: Dict[str, set[str]] = defaultdict(set)
     slug_tracker: Dict[str, set[str]] = defaultdict(set)
+    reserved_folder_names: Dict[str, set[str]] = defaultdict(set)
+    reserved_link_names: set[str] = set()
     folder_pattern = config.get("folder_pattern", DEFAULT_FOLDER_PATTERN)
+    all_dir = os.path.join(config["dst_dir"], "_all")
 
     # Calculate total files across all batches for progress tracking
     total_files_to_process = sum(len(cluster) for batch in batches
@@ -384,17 +618,35 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
             except ValueError as exc:
                 raise ValueError(f"Failed to build folder name: {exc}") from exc
 
-            folder_name = find_unique_folder_name(config["dst_dir"], base_folder_name)
-            session_folder = os.path.join(config["dst_dir"], folder_name)
+            date_folder = os.path.join(config["dst_dir"], folder_values["date"])
+            date_reserved_names = reserved_folder_names[date_folder]
+            folder_name = find_unique_folder_name(
+                date_folder,
+                base_folder_name,
+                date_reserved_names,
+            )
+            date_reserved_names.add(folder_name)
+            session_folder = validate_session_folder_path(
+                date_folder, folder_name
+            )
 
             # Print session info if debug mode is enabled
             if config.get("debug", False):
                 print(f"\nSession {session_count+1}: {session_folder}")
 
             file_ops = []
+            reserved_session_names: set[str] = set()
             for f, _, _ in cluster:
                 src = os.path.join(config["src_dir"], f)
-                dst = os.path.join(session_folder, f)
+                extension = os.path.splitext(f)[1].lower()
+                hashed_name = f"{compute_file_md5(src)}{extension}"
+                target_name = find_unique_file_name(
+                    session_folder,
+                    hashed_name,
+                    reserved_session_names,
+                )
+                reserved_session_names.add(target_name)
+                dst = os.path.join(session_folder, target_name)
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
 
             results = []
@@ -416,6 +668,28 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                         move_errors += 1
                         # Always print errors
                         print(f"    ERROR: Could not move {src} to {dst}: {err}")
+
+            for _, dst, success, _ in results:
+                if not success:
+                    continue
+
+                link_name = find_unique_file_name(
+                    all_dir,
+                    os.path.basename(dst),
+                    reserved_link_names,
+                )
+                reserved_link_names.add(link_name)
+                link_path, link_success, link_error = create_symlink(
+                    dst,
+                    all_dir,
+                    link_name,
+                    config["dry_run"],
+                )
+                if not link_success:
+                    move_errors += 1
+                    print(
+                        f"    ERROR: Could not create symlink {link_path} -> {dst}: {link_error}"
+                    )
 
             # Log each operation if debug mode is enabled
             if config.get("debug", False):

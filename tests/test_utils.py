@@ -1,5 +1,6 @@
 """Unit tests for utility functions."""
 
+import hashlib
 import unittest
 from unittest.mock import patch, MagicMock
 import tempfile
@@ -9,6 +10,10 @@ from datetime import datetime, timedelta
 
 # Import the functions we want to test
 from prompt_image_organizer.core import (
+    backfill_all_symlinks,
+    build_folder_name,
+    cleanup_broken_symlinks,
+    compute_file_md5,
     sanitize_for_folder,
     extract_prompt,
     similar,
@@ -117,6 +122,18 @@ class TestUtils(unittest.TestCase):
             # Test missing environment variable
             self.assertEqual(get_env_float('MISSING', 1.0), 1.0)
 
+    def test_compute_file_md5(self):
+        """MD5 hashes should be derived from file contents."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            path = os.path.join(temp_dir, "image.png")
+            with open(path, "wb") as handle:
+                handle.write(b"example-bytes")
+
+            self.assertEqual(
+                compute_file_md5(path),
+                hashlib.md5(b"example-bytes").hexdigest(),
+            )
+
     def test_find_unique_folder_name(self):
         """Test unique folder name generation."""
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -138,6 +155,123 @@ class TestUtils(unittest.TestCase):
             os.makedirs(empty_dir, exist_ok=True)
             result = find_unique_folder_name(empty_dir, "test-folder")
             self.assertEqual(result, "test-folder")
+
+    def test_find_unique_folder_name_respects_reserved_names(self):
+        """Reserved names should behave like already planned folders."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = find_unique_folder_name(
+                temp_dir,
+                "planned-folder",
+                reserved_names={"planned-folder", "planned-folder-02"},
+            )
+            self.assertEqual(result, "planned-folder-03")
+
+    def test_cleanup_broken_symlinks_removes_only_broken_links(self):
+        """Broken links should be removed while valid links remain."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = os.path.join(temp_dir, "targets")
+            links_dir = os.path.join(temp_dir, "_all")
+            os.makedirs(target_dir, exist_ok=True)
+            os.makedirs(links_dir, exist_ok=True)
+
+            good_target = os.path.join(target_dir, "good.png")
+            with open(good_target, 'w') as handle:
+                handle.write("test")
+
+            os.symlink(good_target, os.path.join(links_dir, "good.png"))
+            os.symlink(
+                os.path.join(target_dir, "missing.png"),
+                os.path.join(links_dir, "missing.png"),
+            )
+
+            removed_count = cleanup_broken_symlinks(links_dir, dry_run=False)
+
+            self.assertEqual(removed_count, 1)
+            self.assertTrue(os.path.lexists(os.path.join(links_dir, "good.png")))
+            self.assertFalse(os.path.lexists(os.path.join(links_dir, "missing.png")))
+
+    def test_cleanup_broken_symlinks_dry_run_keeps_links(self):
+        """Dry run should report broken links without removing them."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            links_dir = os.path.join(temp_dir, "_all")
+            os.makedirs(links_dir, exist_ok=True)
+            broken_link = os.path.join(links_dir, "missing.png")
+            os.symlink(os.path.join(temp_dir, "missing.png"), broken_link)
+
+            removed_count = cleanup_broken_symlinks(links_dir, dry_run=True)
+
+            self.assertEqual(removed_count, 1)
+            self.assertTrue(os.path.islink(broken_link))
+
+    def test_backfill_all_symlinks_creates_links_from_existing_sessions(self):
+        """Backfill should populate `_all` from dated session folders."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_one = os.path.join(temp_dir, "20240101", "session-one")
+            session_two = os.path.join(temp_dir, "20240102", "session-two")
+            os.makedirs(session_one, exist_ok=True)
+            os.makedirs(session_two, exist_ok=True)
+
+            first_image = os.path.join(session_one, "shared.png")
+            second_image = os.path.join(session_two, "shared.png")
+            with open(first_image, 'w') as handle:
+                handle.write("one")
+            with open(second_image, 'w') as handle:
+                handle.write("two")
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=False,
+            )
+
+            self.assertEqual(created_count, 2)
+            self.assertEqual(error_count, 0)
+            all_entries = sorted(os.listdir(os.path.join(temp_dir, "_all")))
+            self.assertEqual(all_entries, ["shared-02.png", "shared.png"])
+
+    def test_backfill_all_symlinks_dry_run_does_not_mutate(self):
+        """Dry-run backfill should report work without creating links."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_dir = os.path.join(temp_dir, "20240101", "session-one")
+            os.makedirs(session_dir, exist_ok=True)
+            with open(os.path.join(session_dir, "image.png"), 'w') as handle:
+                handle.write("one")
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=True,
+            )
+
+            self.assertEqual(created_count, 1)
+            self.assertEqual(error_count, 0)
+            self.assertFalse(os.path.exists(os.path.join(temp_dir, "_all")))
+
+    def test_backfill_all_symlinks_skips_targets_already_linked(self):
+        """Backfill should not duplicate valid aggregate links."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_dir = os.path.join(temp_dir, "20240101", "session-one")
+            os.makedirs(session_dir, exist_ok=True)
+
+            image_path = os.path.join(session_dir, "image.png")
+            with open(image_path, 'w') as handle:
+                handle.write("one")
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=False,
+            )
+            self.assertEqual(created_count, 1)
+            self.assertEqual(error_count, 0)
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=False,
+            )
+            self.assertEqual(created_count, 0)
+            self.assertEqual(error_count, 0)
+            self.assertEqual(
+                sorted(os.listdir(os.path.join(temp_dir, "_all"))),
+                ["image.png"],
+            )
 
 
 class TestFileOperations(unittest.TestCase):
@@ -206,6 +340,26 @@ class TestFileOperations(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             process_clusters(batches, config)
+
+    def test_build_folder_name_rejects_absolute_path(self):
+        """Folder names must stay relative to the destination root."""
+        with self.assertRaisesRegex(ValueError, "absolute path"):
+            build_folder_name("/tmp/outside", {})
+
+    def test_build_folder_name_rejects_parent_traversal(self):
+        """Folder names must not escape through parent segments."""
+        with self.assertRaisesRegex(ValueError, "parent directory segments"):
+            build_folder_name("..", {})
+
+    def test_build_folder_name_rejects_path_separator(self):
+        """Folder names must be a single path component."""
+        with self.assertRaisesRegex(ValueError, "single folder name"):
+            build_folder_name("nested/folder", {})
+
+    def test_build_folder_name_rejects_whitespace_only_result(self):
+        """Whitespace-only folder names are invalid."""
+        with self.assertRaisesRegex(ValueError, "empty name"):
+            build_folder_name("   ", {})
 
     def test_group_by_time(self):
         """Test time-based grouping."""
