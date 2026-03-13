@@ -40,6 +40,9 @@ class TestCLI(unittest.TestCase):
             self.assertIn("--sim", output)
             self.assertIn("--limit", output)
             self.assertIn("--pattern", output)
+            self.assertIn("--cleanup-broken-links", output)
+            self.assertIn("--backfill-all-links", output)
+            self.assertIn("--open", output)
             self.assertIn("-x", output)
 
     def test_parse_config_help_flag(self):
