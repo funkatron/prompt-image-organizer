@@ -33,7 +33,7 @@ STOPWORDS: set[str] = {
     "with",
 }
 
-DEFAULT_FOLDER_PATTERN = "{datetime}-{slug}{checksum_suffix}-{count_padded}"
+DEFAULT_FOLDER_PATTERN = "{datetime}-session-{cluster_index:03d}-{count_padded}"
 
 
 def get_env_int(name: str, default: int) -> int:

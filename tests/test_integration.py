@@ -266,7 +266,7 @@ class TestIntegration(unittest.TestCase):
 
         # Check that date folders and session folders were created
         date_pattern = re.compile(r"^\d{8}$")
-        pattern = re.compile(r"^\d{8}-\d{4}-[a-z0-9\-]+-\d{3}(?:-\d{2})?$")
+        pattern = re.compile(r"^\d{8}-\d{4}-session-\d{3}-\d{3}(?:-\d{2})?$")
         date_folders = [d for d in os.listdir(self.dst_dir) if date_pattern.match(d)]
         self.assertGreater(len(date_folders), 0)
         session_folders = []
