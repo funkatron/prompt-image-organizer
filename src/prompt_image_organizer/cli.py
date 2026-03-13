@@ -86,6 +86,16 @@ def parse_config() -> Dict[str, Any]:
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
     debug = args.debug
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
+
+    if gap_min < 0:
+        parser.error("--gap must be greater than or equal to 0")
+    if not 0 <= sim_thresh <= 1:
+        parser.error("--sim must be between 0 and 1 inclusive")
+    if cluster_size_limit is not None and cluster_size_limit <= 0:
+        parser.error("--limit must be greater than 0")
+    if workers < 1:
+        parser.error("--workers must be greater than or equal to 1")
+
     return {
         "src_dir": src_dir,
         "dst_dir": dst_dir,
@@ -121,9 +131,7 @@ def main() -> None:
 
     try:
         from tqdm import tqdm
-        tqdm_available = True
     except ImportError:
-        tqdm_available = False
         print("Note: tqdm not found; progress bars disabled. Install with 'pip install tqdm' for better UX.")
 
     session_count, total_files, move_errors = process_clusters(batches, config)

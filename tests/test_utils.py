@@ -9,6 +9,7 @@ from datetime import datetime, timedelta
 
 # Import the functions we want to test
 from prompt_image_organizer.core import (
+    build_folder_name,
     sanitize_for_folder,
     extract_prompt,
     similar,
@@ -139,6 +140,16 @@ class TestUtils(unittest.TestCase):
             result = find_unique_folder_name(empty_dir, "test-folder")
             self.assertEqual(result, "test-folder")
 
+    def test_find_unique_folder_name_respects_reserved_names(self):
+        """Reserved names should behave like already planned folders."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = find_unique_folder_name(
+                temp_dir,
+                "planned-folder",
+                reserved_names={"planned-folder", "planned-folder-02"},
+            )
+            self.assertEqual(result, "planned-folder-03")
+
 
 class TestFileOperations(unittest.TestCase):
     """Test file operation functions."""
@@ -206,6 +217,26 @@ class TestFileOperations(unittest.TestCase):
 
         with self.assertRaises(ValueError):
             process_clusters(batches, config)
+
+    def test_build_folder_name_rejects_absolute_path(self):
+        """Folder names must stay relative to the destination root."""
+        with self.assertRaisesRegex(ValueError, "absolute path"):
+            build_folder_name("/tmp/outside", {})
+
+    def test_build_folder_name_rejects_parent_traversal(self):
+        """Folder names must not escape through parent segments."""
+        with self.assertRaisesRegex(ValueError, "parent directory segments"):
+            build_folder_name("..", {})
+
+    def test_build_folder_name_rejects_path_separator(self):
+        """Folder names must be a single path component."""
+        with self.assertRaisesRegex(ValueError, "single folder name"):
+            build_folder_name("nested/folder", {})
+
+    def test_build_folder_name_rejects_whitespace_only_result(self):
+        """Whitespace-only folder names are invalid."""
+        with self.assertRaisesRegex(ValueError, "empty name"):
+            build_folder_name("   ", {})
 
     def test_group_by_time(self):
         """Test time-based grouping."""

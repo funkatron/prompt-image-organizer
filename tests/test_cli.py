@@ -133,6 +133,42 @@ class TestCLI(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_config()
 
+    def test_parse_config_rejects_negative_gap(self):
+        """Gap must be greater than or equal to zero."""
+        with patch('sys.argv', ['script.py', '--gap', '-1']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_sim_below_zero(self):
+        """Similarity must stay within the inclusive range."""
+        with patch('sys.argv', ['script.py', '--sim', '-0.1']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_sim_above_one(self):
+        """Similarity must stay within the inclusive range."""
+        with patch('sys.argv', ['script.py', '--sim', '1.1']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_zero_limit(self):
+        """Cluster limit must be a positive integer when provided."""
+        with patch('sys.argv', ['script.py', '--limit', '0']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_negative_limit(self):
+        """Cluster limit must be a positive integer when provided."""
+        with patch('sys.argv', ['script.py', '--limit', '-5']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_parse_config_rejects_zero_workers(self):
+        """Workers must be at least one."""
+        with patch('sys.argv', ['script.py', '--workers', '0']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
     def test_parse_config_environment_variables(self):
         """Test configuration parsing with environment variables."""
         env_vars = {
