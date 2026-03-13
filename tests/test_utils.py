@@ -245,6 +245,34 @@ class TestUtils(unittest.TestCase):
             self.assertEqual(error_count, 0)
             self.assertFalse(os.path.exists(os.path.join(temp_dir, "_all")))
 
+    def test_backfill_all_symlinks_skips_targets_already_linked(self):
+        """Backfill should not duplicate valid aggregate links."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            session_dir = os.path.join(temp_dir, "20240101", "session-one")
+            os.makedirs(session_dir, exist_ok=True)
+
+            image_path = os.path.join(session_dir, "image.png")
+            with open(image_path, 'w') as handle:
+                handle.write("one")
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=False,
+            )
+            self.assertEqual(created_count, 1)
+            self.assertEqual(error_count, 0)
+
+            created_count, error_count = backfill_all_symlinks(
+                temp_dir,
+                dry_run=False,
+            )
+            self.assertEqual(created_count, 0)
+            self.assertEqual(error_count, 0)
+            self.assertEqual(
+                sorted(os.listdir(os.path.join(temp_dir, "_all"))),
+                ["image.png"],
+            )
+
 
 class TestFileOperations(unittest.TestCase):
     """Test file operation functions."""

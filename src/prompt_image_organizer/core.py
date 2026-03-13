@@ -383,6 +383,12 @@ def backfill_all_symlinks(
         entry for entry in os.listdir(all_dir)
         if os.path.lexists(os.path.join(all_dir, entry))
     } if os.path.isdir(all_dir) else set()
+    linked_targets = {
+        os.path.realpath(os.path.join(all_dir, entry))
+        for entry in reserved_link_names
+        if os.path.islink(os.path.join(all_dir, entry))
+        and os.path.exists(os.path.join(all_dir, entry))
+    }
 
     created_count = 0
     error_count = 0
@@ -401,6 +407,12 @@ def backfill_all_symlinks(
 
             for image_name in get_image_files(session_dir):
                 target_path = os.path.join(session_dir, image_name)
+                resolved_target = os.path.realpath(target_path)
+                if resolved_target in linked_targets:
+                    if debug:
+                        print(f"  SKIP existing symlink for {target_path}")
+                    continue
+
                 link_name = find_unique_file_name(
                     all_dir,
                     image_name,
@@ -415,6 +427,7 @@ def backfill_all_symlinks(
                 )
                 if success:
                     created_count += 1
+                    linked_targets.add(resolved_target)
                     if debug:
                         action = "LINK" if not dry_run else "WOULD LINK"
                         print(f"  {action} {link_path} -> {target_path}")
