@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 # Import the functions we want to test
 from prompt_image_organizer.core import (
     build_folder_name,
+    cleanup_broken_symlinks,
     sanitize_for_folder,
     extract_prompt,
     similar,
@@ -149,6 +150,43 @@ class TestUtils(unittest.TestCase):
                 reserved_names={"planned-folder", "planned-folder-02"},
             )
             self.assertEqual(result, "planned-folder-03")
+
+    def test_cleanup_broken_symlinks_removes_only_broken_links(self):
+        """Broken links should be removed while valid links remain."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            target_dir = os.path.join(temp_dir, "targets")
+            links_dir = os.path.join(temp_dir, "_all")
+            os.makedirs(target_dir, exist_ok=True)
+            os.makedirs(links_dir, exist_ok=True)
+
+            good_target = os.path.join(target_dir, "good.png")
+            with open(good_target, 'w') as handle:
+                handle.write("test")
+
+            os.symlink(good_target, os.path.join(links_dir, "good.png"))
+            os.symlink(
+                os.path.join(target_dir, "missing.png"),
+                os.path.join(links_dir, "missing.png"),
+            )
+
+            removed_count = cleanup_broken_symlinks(links_dir, dry_run=False)
+
+            self.assertEqual(removed_count, 1)
+            self.assertTrue(os.path.lexists(os.path.join(links_dir, "good.png")))
+            self.assertFalse(os.path.lexists(os.path.join(links_dir, "missing.png")))
+
+    def test_cleanup_broken_symlinks_dry_run_keeps_links(self):
+        """Dry run should report broken links without removing them."""
+        with tempfile.TemporaryDirectory() as temp_dir:
+            links_dir = os.path.join(temp_dir, "_all")
+            os.makedirs(links_dir, exist_ok=True)
+            broken_link = os.path.join(links_dir, "missing.png")
+            os.symlink(os.path.join(temp_dir, "missing.png"), broken_link)
+
+            removed_count = cleanup_broken_symlinks(links_dir, dry_run=True)
+
+            self.assertEqual(removed_count, 1)
+            self.assertTrue(os.path.islink(broken_link))
 
 
 class TestFileOperations(unittest.TestCase):

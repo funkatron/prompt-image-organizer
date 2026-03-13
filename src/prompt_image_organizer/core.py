@@ -315,6 +315,42 @@ def create_symlink(
         return (link_path, False, str(exc))
 
 
+def cleanup_broken_symlinks(
+    symlink_dir: str,
+    dry_run: bool,
+    debug: bool = False,
+) -> int:
+    """Remove broken symlinks from the aggregate directory.
+
+    Args:
+        symlink_dir: Directory containing aggregate symlinks.
+        dry_run: If True, report removals without mutating the filesystem.
+        debug: If True, print each broken symlink encountered.
+
+    Returns:
+        Number of broken symlinks found.
+    """
+    if not os.path.isdir(symlink_dir):
+        return 0
+
+    removed_count = 0
+    for entry in sorted(os.listdir(symlink_dir)):
+        link_path = os.path.join(symlink_dir, entry)
+        if not os.path.islink(link_path):
+            continue
+        if os.path.exists(link_path):
+            continue
+
+        removed_count += 1
+        if debug:
+            action = "REMOVE" if not dry_run else "WOULD REMOVE"
+            print(f"  {action} broken symlink {link_path}")
+        if not dry_run:
+            os.unlink(link_path)
+
+    return removed_count
+
+
 def find_unique_folder_name(
     dst_dir: str,
     base_folder_name: str,

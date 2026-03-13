@@ -96,6 +96,7 @@ class TestCLI(unittest.TestCase):
             '--sim', '0.9',
             '--limit', '50',
             '--workers', '4',
+            '--cleanup-broken-links',
             '-x'
         ]):
             config = parse_config()
@@ -108,6 +109,7 @@ class TestCLI(unittest.TestCase):
             self.assertFalse(config["dry_run"])
             self.assertEqual(config["workers"], 4)
             self.assertEqual(config["folder_pattern"], f"{DEFAULT_FOLDER_PATTERN}")
+            self.assertTrue(config["cleanup_broken_links"])
 
     def test_parse_config_invalid_gap(self):
         """Test configuration parsing with invalid gap value."""
@@ -246,6 +248,12 @@ class TestCLI(unittest.TestCase):
             config = parse_config()
             self.assertEqual(config["folder_pattern"], '{datetime}_{slug}')
 
+    def test_parse_config_cleanup_broken_links_default_false(self):
+        """Broken link cleanup should be opt-in."""
+        with patch('sys.argv', ['script.py']):
+            config = parse_config()
+            self.assertFalse(config["cleanup_broken_links"])
+
     def test_main_function_basic(self):
         """Test main function with basic arguments."""
         # Create test directories
@@ -367,6 +375,23 @@ class TestCLI(unittest.TestCase):
              patch('sys.exit') as mock_exit:
             main()
             mock_exit.assert_called_with(0)
+
+    def test_main_function_cleans_broken_links_without_images(self):
+        """Cleanup should still run even when there are no source images."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        all_dir = os.path.join(dst_dir, "_all")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(all_dir, exist_ok=True)
+        broken_link = os.path.join(all_dir, "missing.png")
+        os.symlink(os.path.join(dst_dir, "missing.png"), broken_link)
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--cleanup-broken-links', '-x']), \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        self.assertFalse(os.path.lexists(broken_link))
 
 
 if __name__ == '__main__':

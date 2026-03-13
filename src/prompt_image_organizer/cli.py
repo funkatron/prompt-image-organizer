@@ -7,6 +7,7 @@ from datetime import timedelta
 from typing import Dict, Any
 
 from .core import (
+    cleanup_broken_symlinks,
     get_env_int,
     get_env_float,
     scan_files,
@@ -35,6 +36,8 @@ Options:
   --limit N         Maximum cluster (session) size [env: SESSION_CLUSTER_LIMIT, default: unlimited]
   --workers N       Number of concurrent file moves (default: 8)
   --pattern P      Folder naming pattern (default: {datetime}-{slug}{checksum_suffix}-{count_padded})
+  --cleanup-broken-links
+                    Remove broken symlinks from DST_DIR/_all before processing
   --debug           Enable verbose logging (shows session details and file operations)
   -x                Actually move files (default: dry run)
   -h, --help        Show this help message
@@ -63,6 +66,11 @@ def parse_config() -> Dict[str, Any]:
         '--pattern',
         help=f"Folder naming pattern (default: {DEFAULT_FOLDER_PATTERN})"
     )
+    parser.add_argument(
+        '--cleanup-broken-links',
+        action='store_true',
+        help="Remove broken symlinks from DST_DIR/_all before processing",
+    )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
     parser.add_argument('-x', action='store_true', help="Actually move files")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
@@ -86,6 +94,7 @@ def parse_config() -> Dict[str, Any]:
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
     debug = args.debug
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
+    cleanup_broken_links = args.cleanup_broken_links
 
     if gap_min < 0:
         parser.error("--gap must be greater than or equal to 0")
@@ -106,6 +115,7 @@ def parse_config() -> Dict[str, Any]:
         "workers": workers,
         "debug": debug,
         "folder_pattern": folder_pattern,
+        "cleanup_broken_links": cleanup_broken_links,
     }
 
 
@@ -117,6 +127,17 @@ def main() -> None:
         print(f"ERROR: Source dir '{config['src_dir']}' not found.")
         sys.exit(1)
     os.makedirs(config["dst_dir"], exist_ok=True)
+    all_dir = os.path.join(config["dst_dir"], "_all")
+
+    if config["cleanup_broken_links"]:
+        removed_count = cleanup_broken_symlinks(
+            all_dir,
+            config["dry_run"],
+            config["debug"],
+        )
+        if removed_count:
+            action = "Would remove" if config["dry_run"] else "Removed"
+            print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
 
     file_data = scan_files(config["src_dir"])
     if not file_data:
