@@ -103,10 +103,13 @@ uv run prompt-image-organizer ./imgs ./out --cleanup-broken-links --move
 
 # Rebuild missing _all links from existing sessions, then exit (standalone)
 uv run prompt-image-organizer ./imgs ./out --backfill-all-links --move
+
+# Undo a previous organize run (restore original filenames from manifests)
+uv run prompt-image-organizer ./imgs ./out --undo
+uv run prompt-image-organizer ./imgs ./out --undo --move
 ```
 
-The maintenance flags never organize the source directory; they perform their
-link work and exit. Without `--move` they preview the maintenance instead.
+The maintenance and undo flags never organize the source directory; they perform their work and exit. Without `--move` they preview instead.
 
 ## Folder And File Naming
 
@@ -184,7 +187,16 @@ and the hash name it is stored under:
 ```
 
 The original filename carries the prompt, which would otherwise be lost in
-the hash rename. The manifest keeps every move auditable and reversible.
+the hash rename. The manifest keeps every move auditable and reversible. To restore files:
+
+```bash
+pio ./source-images ./image-sessions --undo          # preview
+pio ./source-images ./image-sessions --undo --move   # apply
+```
+
+Each session's manifest determines the restore destination (`source_dir` in
+the JSON). After a full undo, empty session folders and their manifests are
+removed; matching `_all` symlinks are cleaned up automatically.
 
 ### Aggregate `_all` Directory
 
@@ -201,6 +213,7 @@ preserving the dated session structure underneath.
 - `--pattern P`: custom session folder pattern
 - `--cleanup-broken-links`: remove broken symlinks from `DST_DIR/_all`, then exit
 - `--backfill-all-links`: rebuild missing `_all` symlinks from existing sessions, then exit
+- `--undo`: restore files from session manifests to their original names, then exit
 - `--open`: open the destination folder when processing succeeds
 - `--debug`: verbose logging
 - `--move` (or `-x`): actually move files; without it the tool performs a dry run

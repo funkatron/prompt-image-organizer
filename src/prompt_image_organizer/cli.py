@@ -16,6 +16,8 @@ from .core import (
     group_by_time,
     process_clusters,
     print_summary,
+    undo_from_manifests,
+    print_undo_summary,
     DEFAULT_FOLDER_PATTERN,
 )
 
@@ -55,6 +57,7 @@ Options:
                     Remove broken symlinks from DST_DIR/_all, then exit (standalone; does not organize)
   --backfill-all-links
                     Rebuild missing `_all` symlinks from existing session folders, then exit (standalone)
+  --undo            Restore files from session manifests back to their original names, then exit (standalone)
   --open            Open the destination sessions folder when processing succeeds
   --debug           Enable verbose logging (shows session details and file operations)
   -x, --move        Actually move files (default: dry run)
@@ -96,6 +99,11 @@ def parse_config() -> Dict[str, Any]:
         help="Rebuild missing `_all` symlinks from existing sessions, then exit without organizing",
     )
     parser.add_argument(
+        '--undo',
+        action='store_true',
+        help="Restore files from session manifests to their original names, then exit",
+    )
+    parser.add_argument(
         '--open',
         action='store_true',
         help="Open the destination sessions folder when processing succeeds",
@@ -130,7 +138,19 @@ def parse_config() -> Dict[str, Any]:
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
     cleanup_broken_links = args.cleanup_broken_links
     backfill_all_links = args.backfill_all_links
+    undo = args.undo
     open_when_done = args.open
+
+    standalone_flags = sum([
+        cleanup_broken_links,
+        backfill_all_links,
+        undo,
+    ])
+    if standalone_flags > 1:
+        parser.error(
+            "--undo, --cleanup-broken-links, and --backfill-all-links "
+            "are mutually exclusive"
+        )
 
     if gap_min < 0:
         parser.error("--gap must be greater than or equal to 0")
@@ -153,6 +173,7 @@ def parse_config() -> Dict[str, Any]:
         "folder_pattern": folder_pattern,
         "cleanup_broken_links": cleanup_broken_links,
         "backfill_all_links": backfill_all_links,
+        "undo": undo,
         "open_when_done": open_when_done,
     }
 
@@ -178,6 +199,35 @@ def open_destination_if_present(dst_dir: str) -> None:
         print(f"Note: destination '{dst_dir}' does not exist yet; nothing to open.")
         return
     open_directory(dst_dir)
+
+
+def run_undo(config: Dict[str, Any]) -> None:
+    """Restore organized files using session manifests and exit."""
+    if not os.path.isdir(config["dst_dir"]):
+        print(
+            f"ERROR: Destination dir '{config['dst_dir']}' not found.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+        return
+
+    session_count, total_files, restore_errors = undo_from_manifests(
+        config["dst_dir"],
+        config["dry_run"],
+        config["debug"],
+        config["workers"],
+    )
+    if session_count == 0 and restore_errors == 0:
+        print(f"No session manifests found in {config['dst_dir']}")
+    print_undo_summary(
+        session_count,
+        total_files,
+        restore_errors,
+        config["dry_run"],
+    )
+    if config["open_when_done"] and restore_errors == 0 and session_count:
+        open_destination_if_present(config["dst_dir"])
+    sys.exit(1 if restore_errors else 0)
 
 
 def run_maintenance(config: Dict[str, Any]) -> None:
@@ -214,9 +264,11 @@ def main() -> None:
     """Main CLI entry point."""
     config = parse_config()
 
-    # Maintenance flags are standalone operations: they run and exit so a
-    # link fixup can never silently turn into a bulk file move. They only
-    # need DST_DIR, so dispatch before validating SRC_DIR.
+    # Standalone operations only need DST_DIR, so dispatch before SRC_DIR
+    # validation and never organize files from the source directory.
+    if config["undo"]:
+        run_undo(config)
+        return
     if config["cleanup_broken_links"] or config["backfill_all_links"]:
         run_maintenance(config)
         return

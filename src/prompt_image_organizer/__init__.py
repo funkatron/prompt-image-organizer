@@ -1,12 +1,14 @@
 """Prompt Image Organizer - Organize AI-generated images by their prompts and creation time."""
 
-__version__ = "0.2.0"
+__version__ = "0.2.1"
 
 from .core import (
     backfill_all_symlinks,
     DEFAULT_FOLDER_PATTERN,
     MANIFEST_FILE_NAME,
     cleanup_broken_symlinks,
+    undo_from_manifests,
+    print_undo_summary,
     write_session_manifest,
     compute_file_md5,
     get_env_int,
@@ -32,6 +34,8 @@ __all__ = [
     "cleanup_broken_symlinks",
     "backfill_all_symlinks",
     "write_session_manifest",
+    "undo_from_manifests",
+    "print_undo_summary",
     "compute_file_md5",
     "get_env_int",
     "get_env_float",

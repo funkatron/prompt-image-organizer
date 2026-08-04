@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1] - 2026-08-04
+
+### Added
+- `--undo` standalone operation: restore files from session `manifest.json`
+  files back to their original names and source directories, remove matching
+  `_all` symlinks, and clean up empty session folders
+- Dry-run undo previews each restore (`stored_name -> original_name`) before
+  applying with `--move`
+
 ## [0.2.0] - 2026-08-04
 
 ### Added

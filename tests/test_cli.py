@@ -458,6 +458,47 @@ class TestCLI(unittest.TestCase):
 
         self.assertFalse(os.path.lexists(broken_link))
 
+    def test_parse_config_undo_flag(self):
+        """Undo should be opt-in."""
+        with patch('sys.argv', ['script.py', '--undo']):
+            config = parse_config()
+            self.assertTrue(config["undo"])
+
+    def test_parse_config_standalone_flags_conflict(self):
+        """Standalone operations must not be combined."""
+        with patch('sys.argv', ['script.py', '--undo', '--backfill-all-links']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
+    def test_undo_runs_without_source_directory(self):
+        """Undo reads manifests from the destination and restores recorded paths."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(dst_dir, exist_ok=True)
+
+        image_path = os.path.join(src_dir, "restorable_image.png")
+        with open(image_path, "w") as handle:
+            handle.write("restore me")
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--move']):
+            main()
+
+        self.assertFalse(os.path.exists(image_path))
+        os.rmdir(src_dir)
+
+        with patch('sys.argv', [
+            'script.py',
+            '/non/existent/source',
+            dst_dir,
+            '--undo',
+            '--move',
+        ]), patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        self.assertTrue(os.path.isfile(os.path.join(src_dir, "restorable_image.png")))
+
     def test_maintenance_runs_when_source_directory_is_missing(self):
         """Link maintenance only needs the destination tree."""
         dst_dir = os.path.join(self.temp_dir, "dst")
