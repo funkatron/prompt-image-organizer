@@ -2,6 +2,7 @@
 
 import base64
 import hashlib
+import json
 import os
 import re
 import shutil
@@ -34,6 +35,45 @@ STOPWORDS: set[str] = {
 }
 
 DEFAULT_FOLDER_PATTERN = "{datetime}-session-{cluster_index:03d}-{count_padded}"
+
+MANIFEST_FILE_NAME = "manifest.json"
+MANIFEST_VERSION = 1
+
+
+def write_session_manifest(
+    session_folder: str,
+    source_dir: str,
+    entries: List[Dict[str, str]],
+) -> Optional[str]:
+    """Write a manifest recording original names for the moved files.
+
+    The manifest is what makes a move reversible and auditable: the original
+    filename carries the prompt, which is otherwise lost when files are
+    renamed to content hashes.
+
+    Args:
+        session_folder: Session folder the files were moved into.
+        source_dir: Directory the files were moved from.
+        entries: One mapping per moved file with keys ``original_name``,
+            ``prompt``, ``modified_at``, and ``stored_name``.
+
+    Returns:
+        Error message on failure, otherwise None.
+    """
+    manifest = {
+        "manifest_version": MANIFEST_VERSION,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source_dir": os.path.abspath(source_dir),
+        "files": sorted(entries, key=lambda entry: entry["original_name"]),
+    }
+    manifest_path = os.path.join(session_folder, MANIFEST_FILE_NAME)
+    try:
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+    except Exception as exc:
+        return str(exc)
+    return None
 
 
 def get_env_int(name: str, default: int) -> int:
@@ -636,7 +676,8 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
 
             file_ops = []
             reserved_session_names: set[str] = set()
-            for f, _, _ in cluster:
+            source_metadata: Dict[str, Dict[str, str]] = {}
+            for f, file_mtime, file_prompt in cluster:
                 src = os.path.join(config["src_dir"], f)
                 extension = os.path.splitext(f)[1].lower()
                 hashed_name = f"{compute_file_md5(src)}{extension}"
@@ -647,6 +688,11 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                 )
                 reserved_session_names.add(target_name)
                 dst = os.path.join(session_folder, target_name)
+                source_metadata[src] = {
+                    "original_name": f,
+                    "prompt": file_prompt,
+                    "modified_at": file_mtime.isoformat(timespec="seconds"),
+                }
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
 
             results = []
@@ -690,6 +736,26 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                     print(
                         f"    ERROR: Could not create symlink {link_path} -> {dst}: {link_error}"
                     )
+
+            if not config["dry_run"]:
+                manifest_entries = []
+                for src, dst, success, _ in results:
+                    if not success:
+                        continue
+                    entry = dict(source_metadata[src])
+                    entry["stored_name"] = os.path.basename(dst)
+                    manifest_entries.append(entry)
+                if manifest_entries:
+                    manifest_error = write_session_manifest(
+                        session_folder,
+                        config["src_dir"],
+                        manifest_entries,
+                    )
+                    if manifest_error:
+                        move_errors += 1
+                        print(
+                            f"    ERROR: Could not write manifest in {session_folder}: {manifest_error}"
+                        )
 
             # Log each operation if debug mode is enabled
             if config.get("debug", False):

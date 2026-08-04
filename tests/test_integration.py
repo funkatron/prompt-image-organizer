@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 # Import the functions we want to test
 from prompt_image_organizer.core import (
+    MANIFEST_FILE_NAME,
     scan_files,
     process_clusters,
     move_file_worker,
@@ -284,6 +286,70 @@ class TestIntegration(unittest.TestCase):
             stem, extension = os.path.splitext(entry)
             self.assertEqual(extension, ".png")
             self.assertRegex(stem, r"^[a-f0-9]{32}(?:-\d{2})?$")
+
+    def test_actual_move_writes_manifest_per_session(self):
+        """Every session folder should record original names and prompts."""
+        file_data = scan_files(self.src_dir)
+        original_names = {item[0] for item in file_data}
+
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, config["gap"])
+        process_clusters(batches, config)
+
+        manifests = []
+        for root, _, files in os.walk(self.dst_dir):
+            if MANIFEST_FILE_NAME in files:
+                manifests.append(os.path.join(root, MANIFEST_FILE_NAME))
+        self.assertGreater(len(manifests), 0)
+
+        recorded_names = set()
+        for manifest_path in manifests:
+            with open(manifest_path, encoding="utf-8") as handle:
+                manifest = json.load(handle)
+
+            session_folder = os.path.dirname(manifest_path)
+            self.assertEqual(
+                manifest["source_dir"], os.path.abspath(self.src_dir)
+            )
+            for entry in manifest["files"]:
+                recorded_names.add(entry["original_name"])
+                self.assertTrue(entry["prompt"])
+                self.assertTrue(entry["modified_at"])
+                # The stored name must point at a real file in the session.
+                self.assertTrue(
+                    os.path.isfile(
+                        os.path.join(session_folder, entry["stored_name"])
+                    )
+                )
+
+        # Every moved file must be recoverable from some manifest.
+        self.assertEqual(recorded_names, original_names)
+
+    def test_dry_run_writes_no_manifest(self):
+        """Dry runs must not leave manifests (or anything else) behind."""
+        file_data = scan_files(self.src_dir)
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": True,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, config["gap"])
+        process_clusters(batches, config)
+
+        for root, _, files in os.walk(self.dst_dir):
+            self.assertNotIn(MANIFEST_FILE_NAME, files)
 
     def test_custom_folder_pattern(self):
         """Ensure custom folder pattern is applied."""
