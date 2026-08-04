@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-08-04
+
+### Added
+- Per-session `manifest.json` recording each moved file's original name,
+  extracted prompt, and modification time alongside its stored hash name,
+  making moves auditable and reversible
+- Dry runs now print the actual plan: each session folder with sample
+  original filenames, plus a hint that `--move` applies it
+- `--move` as the self-documenting spelling of `-x`, and an explicit
+  `--dry-run` flag so scripts can state the default
+- `pio` as a short CLI alias for `prompt-image-organizer`
+- `{session_index}` folder pattern placeholder: a run-global session
+  counter that never repeats, unlike the per-batch `{cluster_index}`
+- Warnings on invalid environment variable values instead of silent
+  fallback to defaults
+
+### Changed
+- Default session folder pattern is now
+  `{datetime}-session-{session_index:03d}-x{count_padded}`; session numbers
+  no longer repeat within a run and the file count reads as a count
+- `--cleanup-broken-links` and `--backfill-all-links` are standalone
+  maintenance operations: they run and exit instead of also organizing
+  whatever is in the source directory
+- Dry runs no longer touch the filesystem: the destination directory is
+  not created and file contents are not read (hash names show as `<md5>`
+  placeholders in `--debug` output)
+- Fatal errors go to stderr, and argument errors point at `-h`
+- The progress bar only appears for real moves, not dry runs
+
+### Removed
+- Vestigial "install tqdm" hint (`tqdm` is a hard dependency)
+
 ## [0.1.2] - 2026-03-13
 
 ### Added

@@ -194,7 +194,7 @@ wheels = [
 
 [[package]]
 name = "prompt-image-organizer"
-version = "1.2.0"
+version = "0.2.0"
 source = { editable = "." }
 dependencies = [
     { name = "tqdm" },

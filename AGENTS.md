@@ -24,6 +24,7 @@ src/prompt_image_organizer/
 - **Processing Pipeline**: `process_clusters()` - Main orchestration function
 - **Utilities**: `sanitize_for_folder()`, `extract_prompt()`, `similar()`
 - **Aggregate Link Helpers**: `cleanup_broken_symlinks()`, `backfill_all_symlinks()`
+- **Manifest**: `write_session_manifest()` - Records original filenames/prompts per session
 
 #### `cli.py` - Command Line Interface
 - **Configuration**: `parse_config()` - Parses CLI args and environment variables
@@ -94,10 +95,14 @@ uv run prompt-image-organizer --help
 
 ### 4. File Processing (`process_clusters`)
 - Creates dated session folders using safe neutral default names
+  (default pattern: `{datetime}-session-{session_index:03d}-x{count_padded}`)
 - Uses `ThreadPoolExecutor` for concurrent file operations
-- Implements progress tracking with `tqdm`
-- Handles dry-run mode for safe previewing
+- Implements progress tracking with `tqdm` (real moves only)
+- Dry runs print the planned sessions with sample original filenames and
+  touch nothing: no destination directories, no content hashing
 - Renames moved files to MD5-based filenames and maintains `_all/` symlinks
+- Writes a per-session `manifest.json` mapping original name, prompt, and
+  mtime to the stored hash name (see `write_session_manifest()`)
 
 ## Configuration System
 
@@ -107,11 +112,14 @@ uv run prompt-image-organizer --help
 - `--limit N`: Max files per session (default: unlimited)
 - `--workers N`: Concurrent operations (default: 8)
 - `--pattern P`: Session folder naming pattern
-- `--cleanup-broken-links`: Remove broken symlinks from `DST_DIR/_all`
-- `--backfill-all-links`: Rebuild missing `_all` symlinks from existing sessions
+- `--cleanup-broken-links`: Remove broken symlinks from `DST_DIR/_all`, then exit (standalone; never organizes)
+- `--backfill-all-links`: Rebuild missing `_all` symlinks from existing sessions, then exit (standalone)
 - `--open`: Open the destination folder on success
 - `--debug`: Verbose logging mode
-- `-x`: Actually move files (default: dry run)
+- `-x, --move`: Actually move files (default: dry run)
+- `--dry-run`: State the default dry-run mode explicitly (conflicts with `--move`)
+
+The CLI is also installed as the short alias `pio`.
 
 ### Environment Variables
 - `SRC_DIR`: Source directory
