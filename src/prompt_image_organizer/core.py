@@ -814,4 +814,4 @@ def print_summary(session_count: int, total_files: int, move_errors: int, dry_ru
     if move_errors:
         print(f"Total errors during file move: {move_errors}")
     if dry_run:
-        print("This was a dry run; nothing was moved. Add -x to apply.")
+        print("This was a dry run; nothing was moved. Add --move (or -x) to apply.")

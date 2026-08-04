@@ -175,6 +175,24 @@ class TestCLI(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_config()
 
+    def test_parse_config_move_long_flag(self):
+        """--move behaves exactly like -x."""
+        with patch('sys.argv', ['script.py', '--move']):
+            config = parse_config()
+            self.assertFalse(config["dry_run"])
+
+    def test_parse_config_explicit_dry_run_flag(self):
+        """--dry-run states the default explicitly."""
+        with patch('sys.argv', ['script.py', '--dry-run']):
+            config = parse_config()
+            self.assertTrue(config["dry_run"])
+
+    def test_parse_config_move_and_dry_run_conflict(self):
+        """--move and --dry-run together must be rejected."""
+        with patch('sys.argv', ['script.py', '--move', '--dry-run']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
     def test_parse_config_environment_variables(self):
         """Test configuration parsing with environment variables."""
         env_vars = {

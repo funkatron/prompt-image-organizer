@@ -44,12 +44,13 @@ Options:
                     Rebuild missing `_all` symlinks from existing session folders
   --open            Open the destination sessions folder when processing succeeds
   --debug           Enable verbose logging (shows session details and file operations)
-  -x                Actually move files (default: dry run)
+  -x, --move        Actually move files (default: dry run)
+  --dry-run         Preview without moving files (the default; provided so scripts can be explicit)
   -h, --help        Show this help message
 
 Examples:
   prompt-image-organizer ./imgs ./out --gap 45 --workers 12
-  prompt-image-organizer ./imgs ./out --sim 0.9 --limit 100 -x
+  prompt-image-organizer ./imgs ./out --sim 0.9 --limit 100 --move
   prompt-image-organizer -h
 """)
 
@@ -87,7 +88,10 @@ def parse_config() -> Dict[str, Any]:
         help="Open the destination sessions folder when processing succeeds",
     )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
-    parser.add_argument('-x', action='store_true', help="Actually move files")
+    parser.add_argument('-x', '--move', dest='move', action='store_true',
+                        help="Actually move files (default: dry run)")
+    parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                        help="Preview without moving files (the default)")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
     args = parser.parse_args()
 
@@ -105,7 +109,9 @@ def parse_config() -> Dict[str, Any]:
     gap_min = args.gap if args.gap is not None else get_env_int("SESSION_GAP_MINUTES", 60)
     sim_thresh = args.sim if args.sim is not None else get_env_float("PROMPT_SIMILARITY", 0.8)
     cluster_size_limit = args.limit if args.limit is not None else get_env_int("SESSION_CLUSTER_LIMIT", 0) or None
-    dry_run = not args.x
+    if args.move and args.dry_run:
+        parser.error("--move (-x) and --dry-run are mutually exclusive")
+    dry_run = not args.move
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
     debug = args.debug
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
