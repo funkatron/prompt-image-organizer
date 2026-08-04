@@ -359,6 +359,48 @@ class TestIntegration(unittest.TestCase):
         self.assertIn("a_dog_running_1.png", output)
         self.assertIn("completely_different_prompt_1.png", output)
 
+    def test_dry_run_does_not_create_destination(self):
+        """Previewing must not touch the filesystem at all."""
+        fresh_dst = os.path.join(self.test_dir, "never-created")
+
+        with patch('sys.argv', ['script.py', self.src_dir, fresh_dst]):
+            from prompt_image_organizer.cli import main
+            main()
+
+        self.assertFalse(os.path.exists(fresh_dst))
+        # Source files are untouched.
+        self.assertEqual(len(os.listdir(self.src_dir)), 7)
+
+    def test_dry_run_does_not_read_file_contents(self):
+        """A preview should stay cheap: no hashing of file contents."""
+        locked_file = os.path.join(self.src_dir, "a_cat_sitting_1.png")
+        os.chmod(locked_file, 0o000)
+        try:
+            with open(locked_file, "rb"):
+                pass
+            self.skipTest("Permission error not enforced on this platform")
+        except PermissionError:
+            pass
+
+        try:
+            file_data = scan_files(self.src_dir)
+            config = {
+                "src_dir": self.src_dir,
+                "dst_dir": self.dst_dir,
+                "gap": timedelta(minutes=60),
+                "sim_thresh": 0.8,
+                "cluster_size_limit": None,
+                "dry_run": True,
+                "workers": 2,
+            }
+            batches = group_by_time(file_data, config["gap"])
+            # Would raise PermissionError if the dry run hashed contents.
+            _, total_files, move_errors = process_clusters(batches, config)
+            self.assertEqual(total_files, 7)
+            self.assertEqual(move_errors, 0)
+        finally:
+            os.chmod(locked_file, 0o644)
+
     def test_dry_run_writes_no_manifest(self):
         """Dry runs must not leave manifests (or anything else) behind."""
         file_data = scan_files(self.src_dir)

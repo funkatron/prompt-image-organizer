@@ -150,6 +150,17 @@ def open_directory(path: str) -> None:
     subprocess.run(["xdg-open", path], check=True)
 
 
+def open_destination_if_present(dst_dir: str) -> None:
+    """Open the destination folder, or explain why it cannot be opened.
+
+    Dry runs no longer create the destination, so it may not exist yet.
+    """
+    if not os.path.isdir(dst_dir):
+        print(f"Note: destination '{dst_dir}' does not exist yet; nothing to open.")
+        return
+    open_directory(dst_dir)
+
+
 def main() -> None:
     """Main CLI entry point."""
     config = parse_config()
@@ -158,7 +169,10 @@ def main() -> None:
         print(f"ERROR: Source dir '{config['src_dir']}' not found.")
         sys.exit(1)
         return
-    os.makedirs(config["dst_dir"], exist_ok=True)
+    # A dry run must not touch the filesystem, so the destination is only
+    # created when files will actually be moved.
+    if not config["dry_run"]:
+        os.makedirs(config["dst_dir"], exist_ok=True)
     all_dir = os.path.join(config["dst_dir"], "_all")
 
     if config["cleanup_broken_links"]:
@@ -190,7 +204,7 @@ def main() -> None:
             sys.exit(1)
             return
         if config["open_when_done"]:
-            open_directory(config["dst_dir"])
+            open_destination_if_present(config["dst_dir"])
         sys.exit(0)
         return
 
@@ -213,7 +227,7 @@ def main() -> None:
         config["dry_run"],
     )
     if config["open_when_done"] and move_errors + backfill_errors == 0:
-        open_directory(config["dst_dir"])
+        open_destination_if_present(config["dst_dir"])
 
 
 if __name__ == "__main__":

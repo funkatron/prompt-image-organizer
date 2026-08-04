@@ -421,6 +421,9 @@ def backfill_all_symlinks(
     Returns:
         Tuple of (symlinks_created, symlink_errors).
     """
+    if not os.path.isdir(dst_dir):
+        return (0, 0)
+
     all_dir = os.path.join(dst_dir, "_all")
     reserved_link_names = {
         entry for entry in os.listdir(all_dir)
@@ -702,13 +705,18 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
             for f, file_mtime, file_prompt in cluster:
                 src = os.path.join(config["src_dir"], f)
                 extension = os.path.splitext(f)[1].lower()
-                hashed_name = f"{compute_file_md5(src)}{extension}"
-                target_name = find_unique_file_name(
-                    session_folder,
-                    hashed_name,
-                    reserved_session_names,
-                )
-                reserved_session_names.add(target_name)
+                if config["dry_run"]:
+                    # Hashing reads every byte of every file; a preview
+                    # should stay cheap, so show a placeholder instead.
+                    target_name = f"<md5>{extension}"
+                else:
+                    hashed_name = f"{compute_file_md5(src)}{extension}"
+                    target_name = find_unique_file_name(
+                        session_folder,
+                        hashed_name,
+                        reserved_session_names,
+                    )
+                    reserved_session_names.add(target_name)
                 dst = os.path.join(session_folder, target_name)
                 source_metadata[src] = {
                     "original_name": f,
