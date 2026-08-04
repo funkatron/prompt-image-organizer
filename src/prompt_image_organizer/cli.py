@@ -39,9 +39,9 @@ Options:
   --workers N       Number of concurrent file moves (default: 8)
   --pattern P       Folder naming pattern (default: {datetime}-session-{session_index:03d}-x{count_padded})
   --cleanup-broken-links
-                    Remove broken symlinks from DST_DIR/_all before processing
+                    Remove broken symlinks from DST_DIR/_all, then exit (standalone; does not organize)
   --backfill-all-links
-                    Rebuild missing `_all` symlinks from existing session folders
+                    Rebuild missing `_all` symlinks from existing session folders, then exit (standalone)
   --open            Open the destination sessions folder when processing succeeds
   --debug           Enable verbose logging (shows session details and file operations)
   -x, --move        Actually move files (default: dry run)
@@ -75,12 +75,12 @@ def parse_config() -> Dict[str, Any]:
     parser.add_argument(
         '--cleanup-broken-links',
         action='store_true',
-        help="Remove broken symlinks from DST_DIR/_all before processing",
+        help="Remove broken symlinks from DST_DIR/_all, then exit without organizing",
     )
     parser.add_argument(
         '--backfill-all-links',
         action='store_true',
-        help="Rebuild missing `_all` symlinks from existing session folders",
+        help="Rebuild missing `_all` symlinks from existing sessions, then exit without organizing",
     )
     parser.add_argument(
         '--open',
@@ -181,34 +181,35 @@ def main() -> None:
         os.makedirs(config["dst_dir"], exist_ok=True)
     all_dir = os.path.join(config["dst_dir"], "_all")
 
-    if config["cleanup_broken_links"]:
-        removed_count = cleanup_broken_symlinks(
-            all_dir,
-            config["dry_run"],
-            config["debug"],
-        )
-        if removed_count:
+    # Maintenance flags are standalone operations: they run and exit so a
+    # link fixup can never silently turn into a bulk file move.
+    if config["cleanup_broken_links"] or config["backfill_all_links"]:
+        maintenance_errors = 0
+        if config["cleanup_broken_links"]:
+            removed_count = cleanup_broken_symlinks(
+                all_dir,
+                config["dry_run"],
+                config["debug"],
+            )
             action = "Would remove" if config["dry_run"] else "Removed"
             print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
-
-    backfilled_links = 0
-    backfill_errors = 0
-    if config["backfill_all_links"]:
-        backfilled_links, backfill_errors = backfill_all_symlinks(
-            config["dst_dir"],
-            config["dry_run"],
-            config["debug"],
-        )
-        if backfilled_links:
+        if config["backfill_all_links"]:
+            backfilled_links, backfill_errors = backfill_all_symlinks(
+                config["dst_dir"],
+                config["dry_run"],
+                config["debug"],
+            )
+            maintenance_errors += backfill_errors
             action = "Would create" if config["dry_run"] else "Created"
             print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
+        if config["open_when_done"] and maintenance_errors == 0:
+            open_destination_if_present(config["dst_dir"])
+        sys.exit(1 if maintenance_errors else 0)
+        return
 
     file_data = scan_files(config["src_dir"], debug=config["debug"])
     if not file_data:
         print(f"No image files found in {config['src_dir']}")
-        if backfill_errors:
-            sys.exit(1)
-            return
         if config["open_when_done"]:
             open_destination_if_present(config["dst_dir"])
         sys.exit(0)
@@ -229,10 +230,10 @@ def main() -> None:
     print_summary(
         session_count,
         total_files,
-        move_errors + backfill_errors,
+        move_errors,
         config["dry_run"],
     )
-    if config["open_when_done"] and move_errors + backfill_errors == 0:
+    if config["open_when_done"] and move_errors == 0:
         open_destination_if_present(config["dst_dir"])
 
 
