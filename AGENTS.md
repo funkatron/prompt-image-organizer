@@ -114,6 +114,7 @@ uv run prompt-image-organizer --help
 - `--pattern P`: Session folder naming pattern
 - `--cleanup-broken-links`: Remove broken symlinks from `DST_DIR/_all`, then exit (standalone; never organizes)
 - `--backfill-all-links`: Rebuild missing `_all` symlinks from existing sessions, then exit (standalone)
+- `--undo`: Restore files from session manifests to their original names, then exit (standalone)
 - `--open`: Open the destination folder on success
 - `--debug`: Verbose logging mode
 - `-x, --move`: Actually move files (default: dry run)

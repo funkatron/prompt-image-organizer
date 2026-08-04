@@ -20,8 +20,9 @@ from prompt_image_organizer.core import (
     move_file_worker,
     group_by_time,
     cluster_prompts,
+    undo_from_manifests,
 )
-from prompt_image_organizer.cli import parse_config
+from prompt_image_organizer.cli import parse_config, main
 
 
 class TestIntegration(unittest.TestCase):
@@ -489,6 +490,117 @@ class TestIntegration(unittest.TestCase):
 
         for root, _, files in os.walk(self.dst_dir):
             self.assertNotIn(MANIFEST_FILE_NAME, files)
+
+    def test_undo_restores_files_to_original_names(self):
+        """Organized files should round-trip back via session manifests."""
+        file_data = scan_files(self.src_dir)
+        original_names = sorted(item[0] for item in file_data)
+        original_mtimes = {
+            item[0]: item[1] for item in file_data
+        }
+
+        organize_config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, organize_config["gap"])
+        process_clusters(batches, organize_config)
+
+        self.assertEqual(len(os.listdir(self.src_dir)), 0)
+        manifest_paths = [
+            os.path.join(root, MANIFEST_FILE_NAME)
+            for root, _, files in os.walk(self.dst_dir)
+            if MANIFEST_FILE_NAME in files
+        ]
+        self.assertGreater(len(manifest_paths), 0)
+
+        session_count, total_files, restore_errors = undo_from_manifests(
+            self.dst_dir,
+            dry_run=False,
+            workers=2,
+        )
+
+        self.assertGreater(session_count, 0)
+        self.assertEqual(total_files, 7)
+        self.assertEqual(restore_errors, 0)
+        self.assertEqual(sorted(os.listdir(self.src_dir)), original_names)
+
+        for name in original_names:
+            restored_path = os.path.join(self.src_dir, name)
+            restored_mtime = datetime.fromtimestamp(os.path.getmtime(restored_path))
+            self.assertEqual(
+                restored_mtime.replace(microsecond=0),
+                original_mtimes[name].replace(microsecond=0),
+            )
+
+        # Sessions and manifests should be gone after a full undo.
+        for root, _, files in os.walk(self.dst_dir):
+            self.assertNotIn(MANIFEST_FILE_NAME, files)
+
+    def test_undo_dry_run_prints_restore_plan(self):
+        """Undo preview should list stored names mapping back to originals."""
+        file_data = scan_files(self.src_dir)
+        organize_config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, organize_config["gap"])
+        process_clusters(batches, organize_config)
+
+        with patch("sys.stdout", new=io.StringIO()) as captured:
+            undo_from_manifests(self.dst_dir, dry_run=True)
+        output = captured.getvalue()
+
+        self.assertIn("planned undo", output)
+        self.assertIn("a_cat_sitting_1.png", output)
+        self.assertIn("->", output)
+
+    def test_undo_skips_when_restore_target_already_exists(self):
+        """Undo must not overwrite an existing file at the restore path."""
+        custom_src = os.path.join(self.test_dir, "undo_collision_src")
+        custom_dst = os.path.join(self.test_dir, "undo_collision_dst")
+        os.makedirs(custom_src, exist_ok=True)
+        os.makedirs(custom_dst, exist_ok=True)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        path = os.path.join(custom_src, "prompt_one_1.png")
+        with open(path, "w") as handle:
+            handle.write("one")
+        os.utime(path, (base_time.timestamp(), base_time.timestamp()))
+
+        file_data = scan_files(custom_src)
+        batches = group_by_time(file_data, timedelta(minutes=60))
+        process_clusters(batches, {
+            "src_dir": custom_src,
+            "dst_dir": custom_dst,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 1,
+        })
+
+        blocker = os.path.join(custom_src, "prompt_one_1.png")
+        with open(blocker, "w") as handle:
+            handle.write("already here")
+
+        _, total_files, restore_errors = undo_from_manifests(
+            custom_dst,
+            dry_run=False,
+            workers=1,
+        )
+        self.assertEqual(total_files, 0)
+        self.assertEqual(restore_errors, 1)
 
     def test_custom_folder_pattern(self):
         """Ensure custom folder pattern is applied."""

@@ -81,6 +81,235 @@ def write_session_manifest(
     return None
 
 
+def find_session_manifests(dst_dir: str) -> List[str]:
+    """Return manifest paths under dated session folders, sorted."""
+    if not os.path.isdir(dst_dir):
+        return []
+
+    manifest_paths: List[str] = []
+    for date_entry in sorted(os.listdir(dst_dir)):
+        if date_entry == "_all":
+            continue
+        date_dir = os.path.join(dst_dir, date_entry)
+        if not os.path.isdir(date_dir):
+            continue
+        if not re.fullmatch(r"\d{8}", date_entry):
+            continue
+        for session_entry in sorted(os.listdir(date_dir)):
+            session_dir = os.path.join(date_dir, session_entry)
+            if not os.path.isdir(session_dir):
+                continue
+            manifest_path = os.path.join(session_dir, MANIFEST_FILE_NAME)
+            if os.path.isfile(manifest_path):
+                manifest_paths.append(manifest_path)
+    return manifest_paths
+
+
+def load_session_manifest(manifest_path: str) -> Tuple[Optional[Dict[str, Any]], Optional[str]]:
+    """Load and validate a session manifest file."""
+    try:
+        with open(manifest_path, encoding="utf-8") as handle:
+            manifest = json.load(handle)
+    except Exception as exc:
+        return None, str(exc)
+
+    if manifest.get("manifest_version") != MANIFEST_VERSION:
+        return None, "unsupported manifest_version"
+
+    source_dir = manifest.get("source_dir")
+    if not source_dir or not isinstance(source_dir, str):
+        return None, "missing source_dir"
+
+    files = manifest.get("files")
+    if not isinstance(files, list):
+        return None, "missing files list"
+
+    for entry in files:
+        if not isinstance(entry, dict):
+            return None, "invalid file entry"
+        for key in ("original_name", "prompt", "modified_at", "stored_name"):
+            if key not in entry or not isinstance(entry[key], str):
+                return None, f"file entry missing {key}"
+
+    return manifest, None
+
+
+def remove_symlinks_to_target(
+    all_dir: str,
+    target_path: str,
+    dry_run: bool,
+    debug: bool = False,
+) -> int:
+    """Remove aggregate symlinks that resolve to the given target path."""
+    if not os.path.isdir(all_dir):
+        return 0
+
+    resolved_target = os.path.realpath(target_path)
+    removed_count = 0
+    for entry in sorted(os.listdir(all_dir)):
+        link_path = os.path.join(all_dir, entry)
+        if not os.path.islink(link_path):
+            continue
+        if os.path.realpath(link_path) != resolved_target:
+            continue
+        removed_count += 1
+        if debug:
+            action = "REMOVE LINK" if not dry_run else "WOULD REMOVE LINK"
+            print(f"  {action} {link_path}")
+        if not dry_run:
+            os.unlink(link_path)
+    return removed_count
+
+
+def restore_file_worker(
+    src: str,
+    dst: str,
+    modified_at: Optional[str],
+    dry_run: bool,
+) -> Tuple[str, str, bool, Optional[str]]:
+    """Move a file back to its original name and optionally restore mtime."""
+    if dry_run:
+        return (src, dst, True, None)
+    try:
+        os.makedirs(os.path.dirname(dst), exist_ok=True)
+        shutil.move(src, dst)
+        if modified_at:
+            timestamp = datetime.fromisoformat(modified_at).timestamp()
+            os.utime(dst, (timestamp, timestamp))
+        return (src, dst, True, None)
+    except Exception as exc:
+        return (src, dst, False, str(exc))
+
+
+def undo_from_manifests(
+    dst_dir: str,
+    dry_run: bool,
+    debug: bool = False,
+    workers: int = 8,
+) -> Tuple[int, int, int]:
+    """Restore files recorded in session manifests back to their source dirs.
+
+    Each manifest's ``source_dir`` is the restore destination. After a
+    successful restore, matching ``_all`` symlinks are removed and empty
+    session folders (plus their manifest) are cleaned up.
+
+    Returns:
+        Tuple of (session_count, total_files, restore_errors).
+    """
+    manifest_paths = find_session_manifests(dst_dir)
+    if not manifest_paths:
+        return (0, 0, 0)
+
+    all_dir = os.path.join(dst_dir, "_all")
+    session_count = 0
+    total_files = 0
+    restore_errors = 0
+
+    if dry_run:
+        print("Dry run - planned undo (no files will be restored):\n")
+
+    for manifest_path in manifest_paths:
+        manifest, error = load_session_manifest(manifest_path)
+        if error:
+            restore_errors += 1
+            print(f"    ERROR: Could not read {manifest_path}: {error}")
+            continue
+
+        session_folder = os.path.dirname(manifest_path)
+        restore_dir = manifest["source_dir"]
+        relative_session = os.path.relpath(
+            session_folder, os.path.abspath(dst_dir)
+        )
+        entries = manifest["files"]
+
+        if dry_run:
+            file_word = "file" if len(entries) == 1 else "files"
+            print(f"  {relative_session}  ({len(entries)} {file_word} -> {restore_dir})")
+            for entry in entries[:PLAN_SAMPLE_LIMIT]:
+                print(
+                    f"    {entry['stored_name']} -> {entry['original_name']}"
+                )
+            overflow = len(entries) - PLAN_SAMPLE_LIMIT
+            if overflow > 0:
+                print(f"    ... and {overflow} more")
+            session_count += 1
+            total_files += len(entries)
+            continue
+
+        file_ops = []
+        for entry in entries:
+            src = os.path.join(session_folder, entry["stored_name"])
+            dst = os.path.join(restore_dir, entry["original_name"])
+            if not os.path.isfile(src):
+                restore_errors += 1
+                print(f"    ERROR: Stored file missing for undo: {src}")
+                continue
+            if os.path.exists(dst):
+                restore_errors += 1
+                print(
+                    f"    ERROR: Restore target already exists: {dst}"
+                )
+                continue
+            file_ops.append(
+                (src, dst, entry.get("modified_at"), dry_run)
+            )
+
+        results = []
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            futures = [
+                executor.submit(restore_file_worker, *op) for op in file_ops
+            ]
+            for fut in as_completed(futures):
+                src, dst, success, err = fut.result()
+                results.append((src, dst, success, err))
+                if not success:
+                    restore_errors += 1
+                    print(f"    ERROR: Could not restore {src} to {dst}: {err}")
+
+        restored_sources = []
+        for src, dst, success, _ in results:
+            if not success:
+                continue
+            restored_sources.append(src)
+            remove_symlinks_to_target(all_dir, dst, dry_run=False, debug=debug)
+            total_files += 1
+            if debug:
+                print(f"  RESTORE {src} -> {dst}")
+
+        if restored_sources and len(restored_sources) == len(file_ops):
+            try:
+                os.remove(manifest_path)
+                os.rmdir(session_folder)
+                if debug:
+                    print(f"  REMOVED empty session {session_folder}")
+            except OSError as exc:
+                restore_errors += 1
+                print(
+                    f"    ERROR: Could not remove session folder {session_folder}: {exc}"
+                )
+
+        if restored_sources:
+            session_count += 1
+
+    return session_count, total_files, restore_errors
+
+
+def print_undo_summary(
+    session_count: int,
+    total_files: int,
+    restore_errors: int,
+    dry_run: bool,
+) -> None:
+    """Print summary of undo results."""
+    print("\n=== UNDO SUMMARY ===")
+    print(f"Total sessions: {session_count}")
+    print(f"Total files {'to be restored' if dry_run else 'restored'}: {total_files}")
+    if restore_errors:
+        print(f"Total errors during restore: {restore_errors}")
+    if dry_run and session_count:
+        print("This was a dry run; nothing was restored. Add --move (or -x) to apply.")
+
+
 def get_env_int(name: str, default: int) -> int:
     """Get integer from environment variable with fallback to default.
 
