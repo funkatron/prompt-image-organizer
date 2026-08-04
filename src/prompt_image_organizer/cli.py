@@ -20,6 +20,18 @@ from .core import (
 )
 
 
+class HelpPointerArgumentParser(argparse.ArgumentParser):
+    """Argument parser whose error messages point at the full help text."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(
+            2,
+            f"{self.prog}: error: {message}\n"
+            f"Run '{self.prog} -h' for full help.\n",
+        )
+
+
 def print_help() -> None:
     """Print help message for the CLI."""
     print("""
@@ -29,7 +41,8 @@ Usage:
   prompt-image-organizer [SRC_DIR] [DST_DIR] [options]
 
 Arguments:
-  SRC_DIR           Source image directory (default: $SRC_DIR or current dir)
+  SRC_DIR           Source image directory; only its top level is scanned,
+                    subfolders are ignored (default: $SRC_DIR or current dir)
   DST_DIR           Destination session directory (default: $DST_DIR or SRC_DIR/sessions)
 
 Options:
@@ -61,7 +74,7 @@ def parse_config() -> Dict[str, Any]:
     Returns:
         Configuration dictionary
     """
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = HelpPointerArgumentParser(prog="prompt-image-organizer", add_help=False)
     parser.add_argument('src', nargs='?', help="Source directory")
     parser.add_argument('dst', nargs='?', help="Destination directory")
     parser.add_argument('--gap', type=int, help="Gap in minutes (default 60)")
@@ -172,7 +185,7 @@ def main() -> None:
     config = parse_config()
 
     if not os.path.exists(config["src_dir"]):
-        print(f"ERROR: Source dir '{config['src_dir']}' not found.")
+        print(f"ERROR: Source dir '{config['src_dir']}' not found.", file=sys.stderr)
         sys.exit(1)
         return
     # A dry run must not touch the filesystem, so the destination is only
@@ -220,11 +233,6 @@ def main() -> None:
           f"sim threshold {config['sim_thresh']}, "
           f"cluster limit {config['cluster_size_limit'] or 'unlimited'}, "
           f"workers {config['workers']}).\n")
-
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        print("Note: tqdm not found; progress bars disabled. Install with 'pip install tqdm' for better UX.")
 
     session_count, total_files, move_errors = process_clusters(batches, config)
     print_summary(

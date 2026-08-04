@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shutil
+import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -82,6 +83,9 @@ def write_session_manifest(
 def get_env_int(name: str, default: int) -> int:
     """Get integer from environment variable with fallback to default.
 
+    Invalid values fall back to the default with a warning, so a typo in
+    the environment never silently changes behavior.
+
     Args:
         name: Environment variable name
         default: Default value if environment variable is not set or invalid
@@ -89,14 +93,24 @@ def get_env_int(name: str, default: int) -> int:
     Returns:
         Integer value from environment or default
     """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
     try:
-        return int(os.environ.get(name, default))
-    except Exception:
+        return int(raw)
+    except ValueError:
+        print(
+            f"WARNING: ignoring invalid {name}={raw!r}; using default {default}",
+            file=sys.stderr,
+        )
         return default
 
 
 def get_env_float(name: str, default: float) -> float:
     """Get float from environment variable with fallback to default.
+
+    Invalid values fall back to the default with a warning, so a typo in
+    the environment never silently changes behavior.
 
     Args:
         name: Environment variable name
@@ -105,9 +119,16 @@ def get_env_float(name: str, default: float) -> float:
     Returns:
         Float value from environment or default
     """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
     try:
-        return float(os.environ.get(name, default))
-    except Exception:
+        return float(raw)
+    except ValueError:
+        print(
+            f"WARNING: ignoring invalid {name}={raw!r}; using default {default}",
+            file=sys.stderr,
+        )
         return default
 
 
