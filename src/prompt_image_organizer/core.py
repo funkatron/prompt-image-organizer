@@ -34,7 +34,7 @@ STOPWORDS: set[str] = {
     "with",
 }
 
-DEFAULT_FOLDER_PATTERN = "{datetime}-session-{cluster_index:03d}-{count_padded}"
+DEFAULT_FOLDER_PATTERN = "{datetime}-session-{session_index:03d}-x{count_padded}"
 
 MANIFEST_FILE_NAME = "manifest.json"
 MANIFEST_VERSION = 1
@@ -660,6 +660,9 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                 "base_slug": base_slug,
                 "count": len(cluster),
                 "count_padded": f"{len(cluster):03d}",
+                # Global counter: unlike cluster_index it never repeats
+                # within a run, so default folder names stay unambiguous.
+                "session_index": session_count + 1,
                 "cluster_index": cluster_idx + 1,
                 "batch_index": batch_idx + 1,
                 "checksum": checksum,

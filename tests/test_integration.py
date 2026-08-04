@@ -268,7 +268,7 @@ class TestIntegration(unittest.TestCase):
 
         # Check that date folders and session folders were created
         date_pattern = re.compile(r"^\d{8}$")
-        pattern = re.compile(r"^\d{8}-\d{4}-session-\d{3}-\d{3}(?:-\d{2})?$")
+        pattern = re.compile(r"^\d{8}-\d{4}-session-\d{3}-x\d{3}(?:-\d{2})?$")
         date_folders = [d for d in os.listdir(self.dst_dir) if date_pattern.match(d)]
         self.assertGreater(len(date_folders), 0)
         session_folders = []
@@ -286,6 +286,35 @@ class TestIntegration(unittest.TestCase):
             stem, extension = os.path.splitext(entry)
             self.assertEqual(extension, ".png")
             self.assertRegex(stem, r"^[a-f0-9]{32}(?:-\d{2})?$")
+
+    def test_default_session_numbers_do_not_repeat_within_a_run(self):
+        """Two batches on the same day must not both produce session-001."""
+        file_data = scan_files(self.src_dir)
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            # 40 minutes splits the fixture (largest gap is 55 minutes)
+            # into two batches, which is the case where the old per-batch
+            # cluster index used to repeat.
+            "gap": timedelta(minutes=40),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, config["gap"])
+        self.assertGreater(len(batches), 1)
+        session_count, _, _ = process_clusters(batches, config)
+
+        session_numbers = []
+        for root, dirs, _ in os.walk(self.dst_dir):
+            for name in dirs:
+                match = re.match(r"^\d{8}-\d{4}-session-(\d{3})-x\d{3}", name)
+                if match:
+                    session_numbers.append(match.group(1))
+
+        self.assertEqual(len(session_numbers), session_count)
+        self.assertEqual(len(session_numbers), len(set(session_numbers)))
 
     def test_actual_move_writes_manifest_per_session(self):
         """Every session folder should record original names and prompts."""
