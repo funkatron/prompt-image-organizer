@@ -180,9 +180,46 @@ def open_destination_if_present(dst_dir: str) -> None:
     open_directory(dst_dir)
 
 
+def run_maintenance(config: Dict[str, Any]) -> None:
+    """Run standalone link maintenance and exit.
+
+    Maintenance only needs the destination tree, so this runs before source
+    validation and never organizes files from the source directory.
+    """
+    all_dir = os.path.join(config["dst_dir"], "_all")
+    maintenance_errors = 0
+    if config["cleanup_broken_links"]:
+        removed_count = cleanup_broken_symlinks(
+            all_dir,
+            config["dry_run"],
+            config["debug"],
+        )
+        action = "Would remove" if config["dry_run"] else "Removed"
+        print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
+    if config["backfill_all_links"]:
+        backfilled_links, backfill_errors = backfill_all_symlinks(
+            config["dst_dir"],
+            config["dry_run"],
+            config["debug"],
+        )
+        maintenance_errors += backfill_errors
+        action = "Would create" if config["dry_run"] else "Created"
+        print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
+    if config["open_when_done"] and maintenance_errors == 0:
+        open_destination_if_present(config["dst_dir"])
+    sys.exit(1 if maintenance_errors else 0)
+
+
 def main() -> None:
     """Main CLI entry point."""
     config = parse_config()
+
+    # Maintenance flags are standalone operations: they run and exit so a
+    # link fixup can never silently turn into a bulk file move. They only
+    # need DST_DIR, so dispatch before validating SRC_DIR.
+    if config["cleanup_broken_links"] or config["backfill_all_links"]:
+        run_maintenance(config)
+        return
 
     if not os.path.exists(config["src_dir"]):
         print(f"ERROR: Source dir '{config['src_dir']}' not found.", file=sys.stderr)
@@ -192,33 +229,6 @@ def main() -> None:
     # created when files will actually be moved.
     if not config["dry_run"]:
         os.makedirs(config["dst_dir"], exist_ok=True)
-    all_dir = os.path.join(config["dst_dir"], "_all")
-
-    # Maintenance flags are standalone operations: they run and exit so a
-    # link fixup can never silently turn into a bulk file move.
-    if config["cleanup_broken_links"] or config["backfill_all_links"]:
-        maintenance_errors = 0
-        if config["cleanup_broken_links"]:
-            removed_count = cleanup_broken_symlinks(
-                all_dir,
-                config["dry_run"],
-                config["debug"],
-            )
-            action = "Would remove" if config["dry_run"] else "Removed"
-            print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
-        if config["backfill_all_links"]:
-            backfilled_links, backfill_errors = backfill_all_symlinks(
-                config["dst_dir"],
-                config["dry_run"],
-                config["debug"],
-            )
-            maintenance_errors += backfill_errors
-            action = "Would create" if config["dry_run"] else "Created"
-            print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
-        if config["open_when_done"] and maintenance_errors == 0:
-            open_destination_if_present(config["dst_dir"])
-        sys.exit(1 if maintenance_errors else 0)
-        return
 
     file_data = scan_files(config["src_dir"], debug=config["debug"])
     if not file_data:

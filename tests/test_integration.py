@@ -316,6 +316,48 @@ class TestIntegration(unittest.TestCase):
         self.assertEqual(len(session_numbers), session_count)
         self.assertEqual(len(session_numbers), len(set(session_numbers)))
 
+    def test_manifest_is_written_before_files_are_moved(self):
+        """Mappings must exist before moves so an interrupt cannot lose metadata."""
+        custom_src = os.path.join(self.test_dir, "early_manifest_src")
+        custom_dst = os.path.join(self.test_dir, "early_manifest_dst")
+        os.makedirs(custom_src, exist_ok=True)
+        os.makedirs(custom_dst, exist_ok=True)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        for index in (1, 2):
+            path = os.path.join(custom_src, f"prompt_one_{index}.png")
+            with open(path, "w") as handle:
+                handle.write(f"content-{index}")
+            os.utime(path, (base_time.timestamp(), base_time.timestamp()))
+
+        file_data = scan_files(custom_src)
+        batches = group_by_time(file_data, timedelta(minutes=60))
+        config = {
+            "src_dir": custom_src,
+            "dst_dir": custom_dst,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 1,
+        }
+
+        manifest_seen_before_move = {"value": False}
+
+        def move_after_manifest_check(src, dst, session_folder, dry_run):
+            manifest_path = os.path.join(session_folder, MANIFEST_FILE_NAME)
+            if os.path.isfile(manifest_path):
+                manifest_seen_before_move["value"] = True
+            return move_file_worker(src, dst, session_folder, dry_run)
+
+        with patch(
+            "prompt_image_organizer.core.move_file_worker",
+            side_effect=move_after_manifest_check,
+        ):
+            process_clusters(batches, config)
+
+        self.assertTrue(manifest_seen_before_move["value"])
+
     def test_actual_move_writes_manifest_per_session(self):
         """Every session folder should record original names and prompts."""
         file_data = scan_files(self.src_dir)

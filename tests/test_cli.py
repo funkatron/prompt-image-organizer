@@ -458,6 +458,26 @@ class TestCLI(unittest.TestCase):
 
         self.assertFalse(os.path.lexists(broken_link))
 
+    def test_maintenance_runs_when_source_directory_is_missing(self):
+        """Link maintenance only needs the destination tree."""
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        all_dir = os.path.join(dst_dir, "_all")
+        os.makedirs(all_dir, exist_ok=True)
+        broken_link = os.path.join(all_dir, "missing.png")
+        os.symlink(os.path.join(dst_dir, "missing.png"), broken_link)
+
+        with patch('sys.argv', [
+            'script.py',
+            '/non/existent/source',
+            dst_dir,
+            '--cleanup-broken-links',
+            '-x',
+        ]), patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        self.assertFalse(os.path.lexists(broken_link))
+
     def test_maintenance_flags_do_not_organize_source_images(self):
         """Link maintenance must never turn into a bulk file move."""
         src_dir = os.path.join(self.temp_dir, "src")

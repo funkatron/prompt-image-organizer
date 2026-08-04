@@ -58,8 +58,8 @@ def write_session_manifest(
     Args:
         session_folder: Session folder the files were moved into.
         source_dir: Directory the files were moved from.
-        entries: One mapping per moved file with keys ``original_name``,
-            ``prompt``, ``modified_at``, and ``stored_name``.
+        entries: One mapping per file with keys ``original_name``, ``prompt``,
+            ``modified_at``, and ``stored_name``.
 
     Returns:
         Error message on failure, otherwise None.
@@ -72,6 +72,7 @@ def write_session_manifest(
     }
     manifest_path = os.path.join(session_folder, MANIFEST_FILE_NAME)
     try:
+        os.makedirs(session_folder, exist_ok=True)
         with open(manifest_path, "w", encoding="utf-8") as handle:
             json.dump(manifest, handle, indent=2, ensure_ascii=False)
             handle.write("\n")
@@ -749,6 +750,28 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                 }
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
 
+            if not config["dry_run"]:
+                # Persist mappings before any moves so an interrupt (Ctrl-C,
+                # kill) cannot leave renamed files without a recovery record.
+                manifest_entries = []
+                for src, dst, _, _ in file_ops:
+                    entry = dict(source_metadata[src])
+                    entry["stored_name"] = os.path.basename(dst)
+                    manifest_entries.append(entry)
+                manifest_error = write_session_manifest(
+                    session_folder,
+                    config["src_dir"],
+                    manifest_entries,
+                )
+                if manifest_error:
+                    move_errors += len(file_ops)
+                    print(
+                        f"    ERROR: Could not write manifest in {session_folder}: {manifest_error}"
+                    )
+                    session_count += 1
+                    total_files += len(cluster)
+                    continue
+
             results = []
 
             with ThreadPoolExecutor(max_workers=config["workers"]) as executor:
@@ -790,26 +813,6 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                     print(
                         f"    ERROR: Could not create symlink {link_path} -> {dst}: {link_error}"
                     )
-
-            if not config["dry_run"]:
-                manifest_entries = []
-                for src, dst, success, _ in results:
-                    if not success:
-                        continue
-                    entry = dict(source_metadata[src])
-                    entry["stored_name"] = os.path.basename(dst)
-                    manifest_entries.append(entry)
-                if manifest_entries:
-                    manifest_error = write_session_manifest(
-                        session_folder,
-                        config["src_dir"],
-                        manifest_entries,
-                    )
-                    if manifest_error:
-                        move_errors += 1
-                        print(
-                            f"    ERROR: Could not write manifest in {session_folder}: {manifest_error}"
-                        )
 
             # Log each operation if debug mode is enabled
             if config.get("debug", False):
