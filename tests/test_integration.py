@@ -333,6 +333,32 @@ class TestIntegration(unittest.TestCase):
         # Every moved file must be recoverable from some manifest.
         self.assertEqual(recorded_names, original_names)
 
+    def test_dry_run_prints_plan_with_original_filenames(self):
+        """The default dry run must show where each file would go."""
+        file_data = scan_files(self.src_dir)
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": True,
+            "workers": 2,
+            "debug": False,
+        }
+        batches = group_by_time(file_data, config["gap"])
+
+        with patch("sys.stdout", new=io.StringIO()) as captured:
+            process_clusters(batches, config)
+        output = captured.getvalue()
+
+        # Session folders appear as paths relative to the destination.
+        self.assertRegex(output, r"\d{8}/\d{8}-\d{4}-session-\d{3}")
+        # Original filenames are listed so the user can judge the grouping.
+        self.assertIn("a_cat_sitting_1.png", output)
+        self.assertIn("a_dog_running_1.png", output)
+        self.assertIn("completely_different_prompt_1.png", output)
+
     def test_dry_run_writes_no_manifest(self):
         """Dry runs must not leave manifests (or anything else) behind."""
         file_data = scan_files(self.src_dir)

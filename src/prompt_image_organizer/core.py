@@ -39,6 +39,9 @@ DEFAULT_FOLDER_PATTERN = "{datetime}-session-{cluster_index:03d}-{count_padded}"
 MANIFEST_FILE_NAME = "manifest.json"
 MANIFEST_VERSION = 1
 
+# How many original filenames to list per session in the dry-run plan.
+PLAN_SAMPLE_LIMIT = 5
+
 
 def write_session_manifest(
     session_folder: str,
@@ -591,21 +594,28 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
     folder_pattern = config.get("folder_pattern", DEFAULT_FOLDER_PATTERN)
     all_dir = os.path.join(config["dst_dir"], "_all")
 
-    # Calculate total files across all batches for progress tracking
-    total_files_to_process = sum(len(cluster) for batch in batches
-                                for cluster in cluster_prompts(batch, threshold=config["sim_thresh"], cluster_size_limit=config["cluster_size_limit"]))
-
-    # Initialize total progress bar if tqdm is available
-    if tqdm and total_files_to_process > 2:
-        total_bar = tqdm(
-            total=total_files_to_process,
-            desc="Processing files" if not config["dry_run"] else "Previewing files",
-            ncols=120,  # Wider progress bar
-            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} files [{elapsed}<{remaining}, {rate_fmt}]',
-            dynamic_ncols=True  # Allow dynamic resizing
+    # A dry run prints the plan itself; a progress bar would only add noise.
+    total_bar = None
+    if tqdm and not config["dry_run"]:
+        total_files_to_process = sum(
+            len(cluster) for batch in batches
+            for cluster in cluster_prompts(
+                batch,
+                threshold=config["sim_thresh"],
+                cluster_size_limit=config["cluster_size_limit"],
+            )
         )
-    else:
-        total_bar = None
+        if total_files_to_process > 2:
+            total_bar = tqdm(
+                total=total_files_to_process,
+                desc="Processing files",
+                ncols=120,  # Wider progress bar
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} files [{elapsed}<{remaining}, {rate_fmt}]',
+                dynamic_ncols=True  # Allow dynamic resizing
+            )
+
+    if config["dry_run"] and batches:
+        print("Dry run - planned sessions (no files will be moved):\n")
 
     for batch_idx, batch in enumerate(batches):
         clusters = cluster_prompts(
@@ -669,6 +679,18 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
             session_folder = validate_session_folder_path(
                 date_folder, folder_name
             )
+
+            if config["dry_run"]:
+                relative_session = os.path.relpath(
+                    session_folder, os.path.abspath(config["dst_dir"])
+                )
+                file_word = "file" if len(cluster) == 1 else "files"
+                print(f"  {relative_session}  ({len(cluster)} {file_word})")
+                for original_name, _, _ in cluster[:PLAN_SAMPLE_LIMIT]:
+                    print(f"    {original_name}")
+                overflow = len(cluster) - PLAN_SAMPLE_LIMIT
+                if overflow > 0:
+                    print(f"    ... and {overflow} more")
 
             # Print session info if debug mode is enabled
             if config.get("debug", False):
@@ -783,3 +805,5 @@ def print_summary(session_count: int, total_files: int, move_errors: int, dry_ru
     print(f"Total files {'to be moved' if dry_run else 'moved'}: {total_files}")
     if move_errors:
         print(f"Total errors during file move: {move_errors}")
+    if dry_run:
+        print("This was a dry run; nothing was moved. Add -x to apply.")
