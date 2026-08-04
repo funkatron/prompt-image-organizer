@@ -20,6 +20,18 @@ from .core import (
 )
 
 
+class HelpPointerArgumentParser(argparse.ArgumentParser):
+    """Argument parser whose error messages point at the full help text."""
+
+    def error(self, message: str) -> None:
+        self.print_usage(sys.stderr)
+        self.exit(
+            2,
+            f"{self.prog}: error: {message}\n"
+            f"Run '{self.prog} -h' for full help.\n",
+        )
+
+
 def print_help() -> None:
     """Print help message for the CLI."""
     print("""
@@ -29,7 +41,8 @@ Usage:
   prompt-image-organizer [SRC_DIR] [DST_DIR] [options]
 
 Arguments:
-  SRC_DIR           Source image directory (default: $SRC_DIR or current dir)
+  SRC_DIR           Source image directory; only its top level is scanned,
+                    subfolders are ignored (default: $SRC_DIR or current dir)
   DST_DIR           Destination session directory (default: $DST_DIR or SRC_DIR/sessions)
 
 Options:
@@ -37,19 +50,20 @@ Options:
   --sim F           Prompt similarity threshold [0-1, env: PROMPT_SIMILARITY, default: 0.8]
   --limit N         Maximum cluster (session) size [env: SESSION_CLUSTER_LIMIT, default: unlimited]
   --workers N       Number of concurrent file moves (default: 8)
-  --pattern P      Folder naming pattern (default: {datetime}-session-{cluster_index:03d}-{count_padded})
+  --pattern P       Folder naming pattern (default: {datetime}-session-{session_index:03d}-x{count_padded})
   --cleanup-broken-links
-                    Remove broken symlinks from DST_DIR/_all before processing
+                    Remove broken symlinks from DST_DIR/_all, then exit (standalone; does not organize)
   --backfill-all-links
-                    Rebuild missing `_all` symlinks from existing session folders
+                    Rebuild missing `_all` symlinks from existing session folders, then exit (standalone)
   --open            Open the destination sessions folder when processing succeeds
   --debug           Enable verbose logging (shows session details and file operations)
-  -x                Actually move files (default: dry run)
+  -x, --move        Actually move files (default: dry run)
+  --dry-run         Preview without moving files (the default; provided so scripts can be explicit)
   -h, --help        Show this help message
 
 Examples:
   prompt-image-organizer ./imgs ./out --gap 45 --workers 12
-  prompt-image-organizer ./imgs ./out --sim 0.9 --limit 100 -x
+  prompt-image-organizer ./imgs ./out --sim 0.9 --limit 100 --move
   prompt-image-organizer -h
 """)
 
@@ -60,7 +74,7 @@ def parse_config() -> Dict[str, Any]:
     Returns:
         Configuration dictionary
     """
-    parser = argparse.ArgumentParser(add_help=False)
+    parser = HelpPointerArgumentParser(prog="prompt-image-organizer", add_help=False)
     parser.add_argument('src', nargs='?', help="Source directory")
     parser.add_argument('dst', nargs='?', help="Destination directory")
     parser.add_argument('--gap', type=int, help="Gap in minutes (default 60)")
@@ -74,12 +88,12 @@ def parse_config() -> Dict[str, Any]:
     parser.add_argument(
         '--cleanup-broken-links',
         action='store_true',
-        help="Remove broken symlinks from DST_DIR/_all before processing",
+        help="Remove broken symlinks from DST_DIR/_all, then exit without organizing",
     )
     parser.add_argument(
         '--backfill-all-links',
         action='store_true',
-        help="Rebuild missing `_all` symlinks from existing session folders",
+        help="Rebuild missing `_all` symlinks from existing sessions, then exit without organizing",
     )
     parser.add_argument(
         '--open',
@@ -87,7 +101,10 @@ def parse_config() -> Dict[str, Any]:
         help="Open the destination sessions folder when processing succeeds",
     )
     parser.add_argument('--debug', action='store_true', help="Enable verbose logging")
-    parser.add_argument('-x', action='store_true', help="Actually move files")
+    parser.add_argument('-x', '--move', dest='move', action='store_true',
+                        help="Actually move files (default: dry run)")
+    parser.add_argument('--dry-run', dest='dry_run', action='store_true',
+                        help="Preview without moving files (the default)")
     parser.add_argument('-h', '--help', action='store_true', help="Show help")
     args = parser.parse_args()
 
@@ -105,7 +122,9 @@ def parse_config() -> Dict[str, Any]:
     gap_min = args.gap if args.gap is not None else get_env_int("SESSION_GAP_MINUTES", 60)
     sim_thresh = args.sim if args.sim is not None else get_env_float("PROMPT_SIMILARITY", 0.8)
     cluster_size_limit = args.limit if args.limit is not None else get_env_int("SESSION_CLUSTER_LIMIT", 0) or None
-    dry_run = not args.x
+    if args.move and args.dry_run:
+        parser.error("--move (-x) and --dry-run are mutually exclusive")
+    dry_run = not args.move
     workers = args.workers if args.workers is not None else get_env_int("SESSION_WORKERS", 8)
     debug = args.debug
     folder_pattern = args.pattern or os.environ.get("SESSION_FOLDER_PATTERN", DEFAULT_FOLDER_PATTERN)
@@ -150,47 +169,72 @@ def open_directory(path: str) -> None:
     subprocess.run(["xdg-open", path], check=True)
 
 
-def main() -> None:
-    """Main CLI entry point."""
-    config = parse_config()
+def open_destination_if_present(dst_dir: str) -> None:
+    """Open the destination folder, or explain why it cannot be opened.
 
-    if not os.path.exists(config["src_dir"]):
-        print(f"ERROR: Source dir '{config['src_dir']}' not found.")
-        sys.exit(1)
+    Dry runs no longer create the destination, so it may not exist yet.
+    """
+    if not os.path.isdir(dst_dir):
+        print(f"Note: destination '{dst_dir}' does not exist yet; nothing to open.")
         return
-    os.makedirs(config["dst_dir"], exist_ok=True)
-    all_dir = os.path.join(config["dst_dir"], "_all")
+    open_directory(dst_dir)
 
+
+def run_maintenance(config: Dict[str, Any]) -> None:
+    """Run standalone link maintenance and exit.
+
+    Maintenance only needs the destination tree, so this runs before source
+    validation and never organizes files from the source directory.
+    """
+    all_dir = os.path.join(config["dst_dir"], "_all")
+    maintenance_errors = 0
     if config["cleanup_broken_links"]:
         removed_count = cleanup_broken_symlinks(
             all_dir,
             config["dry_run"],
             config["debug"],
         )
-        if removed_count:
-            action = "Would remove" if config["dry_run"] else "Removed"
-            print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
-
-    backfilled_links = 0
-    backfill_errors = 0
+        action = "Would remove" if config["dry_run"] else "Removed"
+        print(f"{action} {removed_count} broken symlink(s) from {all_dir}")
     if config["backfill_all_links"]:
         backfilled_links, backfill_errors = backfill_all_symlinks(
             config["dst_dir"],
             config["dry_run"],
             config["debug"],
         )
-        if backfilled_links:
-            action = "Would create" if config["dry_run"] else "Created"
-            print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
+        maintenance_errors += backfill_errors
+        action = "Would create" if config["dry_run"] else "Created"
+        print(f"{action} {backfilled_links} `_all` symlink(s) from existing sessions")
+    if config["open_when_done"] and maintenance_errors == 0:
+        open_destination_if_present(config["dst_dir"])
+    sys.exit(1 if maintenance_errors else 0)
+
+
+def main() -> None:
+    """Main CLI entry point."""
+    config = parse_config()
+
+    # Maintenance flags are standalone operations: they run and exit so a
+    # link fixup can never silently turn into a bulk file move. They only
+    # need DST_DIR, so dispatch before validating SRC_DIR.
+    if config["cleanup_broken_links"] or config["backfill_all_links"]:
+        run_maintenance(config)
+        return
+
+    if not os.path.exists(config["src_dir"]):
+        print(f"ERROR: Source dir '{config['src_dir']}' not found.", file=sys.stderr)
+        sys.exit(1)
+        return
+    # A dry run must not touch the filesystem, so the destination is only
+    # created when files will actually be moved.
+    if not config["dry_run"]:
+        os.makedirs(config["dst_dir"], exist_ok=True)
 
     file_data = scan_files(config["src_dir"], debug=config["debug"])
     if not file_data:
         print(f"No image files found in {config['src_dir']}")
-        if backfill_errors:
-            sys.exit(1)
-            return
         if config["open_when_done"]:
-            open_directory(config["dst_dir"])
+            open_destination_if_present(config["dst_dir"])
         sys.exit(0)
         return
 
@@ -200,20 +244,15 @@ def main() -> None:
           f"cluster limit {config['cluster_size_limit'] or 'unlimited'}, "
           f"workers {config['workers']}).\n")
 
-    try:
-        from tqdm import tqdm
-    except ImportError:
-        print("Note: tqdm not found; progress bars disabled. Install with 'pip install tqdm' for better UX.")
-
     session_count, total_files, move_errors = process_clusters(batches, config)
     print_summary(
         session_count,
         total_files,
-        move_errors + backfill_errors,
+        move_errors,
         config["dry_run"],
     )
-    if config["open_when_done"] and move_errors + backfill_errors == 0:
-        open_directory(config["dst_dir"])
+    if config["open_when_done"] and move_errors == 0:
+        open_destination_if_present(config["dst_dir"])
 
 
 if __name__ == "__main__":

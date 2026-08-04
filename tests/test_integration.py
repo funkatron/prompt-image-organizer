@@ -2,6 +2,7 @@
 
 import hashlib
 import io
+import json
 import os
 import re
 import shutil
@@ -13,6 +14,7 @@ from unittest.mock import MagicMock, patch
 
 # Import the functions we want to test
 from prompt_image_organizer.core import (
+    MANIFEST_FILE_NAME,
     scan_files,
     process_clusters,
     move_file_worker,
@@ -266,7 +268,7 @@ class TestIntegration(unittest.TestCase):
 
         # Check that date folders and session folders were created
         date_pattern = re.compile(r"^\d{8}$")
-        pattern = re.compile(r"^\d{8}-\d{4}-session-\d{3}-\d{3}(?:-\d{2})?$")
+        pattern = re.compile(r"^\d{8}-\d{4}-session-\d{3}-x\d{3}(?:-\d{2})?$")
         date_folders = [d for d in os.listdir(self.dst_dir) if date_pattern.match(d)]
         self.assertGreater(len(date_folders), 0)
         session_folders = []
@@ -284,6 +286,209 @@ class TestIntegration(unittest.TestCase):
             stem, extension = os.path.splitext(entry)
             self.assertEqual(extension, ".png")
             self.assertRegex(stem, r"^[a-f0-9]{32}(?:-\d{2})?$")
+
+    def test_default_session_numbers_do_not_repeat_within_a_run(self):
+        """Two batches on the same day must not both produce session-001."""
+        file_data = scan_files(self.src_dir)
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            # 40 minutes splits the fixture (largest gap is 55 minutes)
+            # into two batches, which is the case where the old per-batch
+            # cluster index used to repeat.
+            "gap": timedelta(minutes=40),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, config["gap"])
+        self.assertGreater(len(batches), 1)
+        session_count, _, _ = process_clusters(batches, config)
+
+        session_numbers = []
+        for root, dirs, _ in os.walk(self.dst_dir):
+            for name in dirs:
+                match = re.match(r"^\d{8}-\d{4}-session-(\d{3})-x\d{3}", name)
+                if match:
+                    session_numbers.append(match.group(1))
+
+        self.assertEqual(len(session_numbers), session_count)
+        self.assertEqual(len(session_numbers), len(set(session_numbers)))
+
+    def test_manifest_is_written_before_files_are_moved(self):
+        """Mappings must exist before moves so an interrupt cannot lose metadata."""
+        custom_src = os.path.join(self.test_dir, "early_manifest_src")
+        custom_dst = os.path.join(self.test_dir, "early_manifest_dst")
+        os.makedirs(custom_src, exist_ok=True)
+        os.makedirs(custom_dst, exist_ok=True)
+
+        base_time = datetime(2024, 1, 1, 12, 0, 0)
+        for index in (1, 2):
+            path = os.path.join(custom_src, f"prompt_one_{index}.png")
+            with open(path, "w") as handle:
+                handle.write(f"content-{index}")
+            os.utime(path, (base_time.timestamp(), base_time.timestamp()))
+
+        file_data = scan_files(custom_src)
+        batches = group_by_time(file_data, timedelta(minutes=60))
+        config = {
+            "src_dir": custom_src,
+            "dst_dir": custom_dst,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 1,
+        }
+
+        manifest_seen_before_move = {"value": False}
+
+        def move_after_manifest_check(src, dst, session_folder, dry_run):
+            manifest_path = os.path.join(session_folder, MANIFEST_FILE_NAME)
+            if os.path.isfile(manifest_path):
+                manifest_seen_before_move["value"] = True
+            return move_file_worker(src, dst, session_folder, dry_run)
+
+        with patch(
+            "prompt_image_organizer.core.move_file_worker",
+            side_effect=move_after_manifest_check,
+        ):
+            process_clusters(batches, config)
+
+        self.assertTrue(manifest_seen_before_move["value"])
+
+    def test_actual_move_writes_manifest_per_session(self):
+        """Every session folder should record original names and prompts."""
+        file_data = scan_files(self.src_dir)
+        original_names = {item[0] for item in file_data}
+
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": False,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, config["gap"])
+        process_clusters(batches, config)
+
+        manifests = []
+        for root, _, files in os.walk(self.dst_dir):
+            if MANIFEST_FILE_NAME in files:
+                manifests.append(os.path.join(root, MANIFEST_FILE_NAME))
+        self.assertGreater(len(manifests), 0)
+
+        recorded_names = set()
+        for manifest_path in manifests:
+            with open(manifest_path, encoding="utf-8") as handle:
+                manifest = json.load(handle)
+
+            session_folder = os.path.dirname(manifest_path)
+            self.assertEqual(
+                manifest["source_dir"], os.path.abspath(self.src_dir)
+            )
+            for entry in manifest["files"]:
+                recorded_names.add(entry["original_name"])
+                self.assertTrue(entry["prompt"])
+                self.assertTrue(entry["modified_at"])
+                # The stored name must point at a real file in the session.
+                self.assertTrue(
+                    os.path.isfile(
+                        os.path.join(session_folder, entry["stored_name"])
+                    )
+                )
+
+        # Every moved file must be recoverable from some manifest.
+        self.assertEqual(recorded_names, original_names)
+
+    def test_dry_run_prints_plan_with_original_filenames(self):
+        """The default dry run must show where each file would go."""
+        file_data = scan_files(self.src_dir)
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": True,
+            "workers": 2,
+            "debug": False,
+        }
+        batches = group_by_time(file_data, config["gap"])
+
+        with patch("sys.stdout", new=io.StringIO()) as captured:
+            process_clusters(batches, config)
+        output = captured.getvalue()
+
+        # Session folders appear as paths relative to the destination.
+        self.assertRegex(output, r"\d{8}/\d{8}-\d{4}-session-\d{3}")
+        # Original filenames are listed so the user can judge the grouping.
+        self.assertIn("a_cat_sitting_1.png", output)
+        self.assertIn("a_dog_running_1.png", output)
+        self.assertIn("completely_different_prompt_1.png", output)
+
+    def test_dry_run_does_not_create_destination(self):
+        """Previewing must not touch the filesystem at all."""
+        fresh_dst = os.path.join(self.test_dir, "never-created")
+
+        with patch('sys.argv', ['script.py', self.src_dir, fresh_dst]):
+            from prompt_image_organizer.cli import main
+            main()
+
+        self.assertFalse(os.path.exists(fresh_dst))
+        # Source files are untouched.
+        self.assertEqual(len(os.listdir(self.src_dir)), 7)
+
+    def test_dry_run_does_not_read_file_contents(self):
+        """A preview should stay cheap: no hashing of file contents."""
+        locked_file = os.path.join(self.src_dir, "a_cat_sitting_1.png")
+        os.chmod(locked_file, 0o000)
+        try:
+            with open(locked_file, "rb"):
+                pass
+            self.skipTest("Permission error not enforced on this platform")
+        except PermissionError:
+            pass
+
+        try:
+            file_data = scan_files(self.src_dir)
+            config = {
+                "src_dir": self.src_dir,
+                "dst_dir": self.dst_dir,
+                "gap": timedelta(minutes=60),
+                "sim_thresh": 0.8,
+                "cluster_size_limit": None,
+                "dry_run": True,
+                "workers": 2,
+            }
+            batches = group_by_time(file_data, config["gap"])
+            # Would raise PermissionError if the dry run hashed contents.
+            _, total_files, move_errors = process_clusters(batches, config)
+            self.assertEqual(total_files, 7)
+            self.assertEqual(move_errors, 0)
+        finally:
+            os.chmod(locked_file, 0o644)
+
+    def test_dry_run_writes_no_manifest(self):
+        """Dry runs must not leave manifests (or anything else) behind."""
+        file_data = scan_files(self.src_dir)
+        config = {
+            "src_dir": self.src_dir,
+            "dst_dir": self.dst_dir,
+            "gap": timedelta(minutes=60),
+            "sim_thresh": 0.8,
+            "cluster_size_limit": None,
+            "dry_run": True,
+            "workers": 2,
+        }
+        batches = group_by_time(file_data, config["gap"])
+        process_clusters(batches, config)
+
+        for root, _, files in os.walk(self.dst_dir):
+            self.assertNotIn(MANIFEST_FILE_NAME, files)
 
     def test_custom_folder_pattern(self):
         """Ensure custom folder pattern is applied."""

@@ -110,6 +110,15 @@ class TestUtils(unittest.TestCase):
             # Test missing environment variable
             self.assertEqual(get_env_int('MISSING', 10), 10)
 
+    def test_get_env_int_warns_about_invalid_value(self):
+        """A typo in the environment should be visible, not silent."""
+        import io
+        with patch.dict(os.environ, {'TEST_INVALID': 'not_a_number'}), \
+             patch('sys.stderr', new=io.StringIO()) as captured:
+            self.assertEqual(get_env_int('TEST_INVALID', 10), 10)
+            self.assertIn('TEST_INVALID', captured.getvalue())
+            self.assertIn('WARNING', captured.getvalue())
+
     def test_get_env_float(self):
         """Test environment variable float parsing."""
         with patch.dict(os.environ, {'TEST_FLOAT': '3.14', 'TEST_INVALID': 'not_a_float'}):

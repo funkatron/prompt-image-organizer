@@ -2,9 +2,11 @@
 
 import base64
 import hashlib
+import json
 import os
 import re
 import shutil
+import sys
 from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta
@@ -33,11 +35,57 @@ STOPWORDS: set[str] = {
     "with",
 }
 
-DEFAULT_FOLDER_PATTERN = "{datetime}-session-{cluster_index:03d}-{count_padded}"
+DEFAULT_FOLDER_PATTERN = "{datetime}-session-{session_index:03d}-x{count_padded}"
+
+MANIFEST_FILE_NAME = "manifest.json"
+MANIFEST_VERSION = 1
+
+# How many original filenames to list per session in the dry-run plan.
+PLAN_SAMPLE_LIMIT = 5
+
+
+def write_session_manifest(
+    session_folder: str,
+    source_dir: str,
+    entries: List[Dict[str, str]],
+) -> Optional[str]:
+    """Write a manifest recording original names for the moved files.
+
+    The manifest is what makes a move reversible and auditable: the original
+    filename carries the prompt, which is otherwise lost when files are
+    renamed to content hashes.
+
+    Args:
+        session_folder: Session folder the files were moved into.
+        source_dir: Directory the files were moved from.
+        entries: One mapping per file with keys ``original_name``, ``prompt``,
+            ``modified_at``, and ``stored_name``.
+
+    Returns:
+        Error message on failure, otherwise None.
+    """
+    manifest = {
+        "manifest_version": MANIFEST_VERSION,
+        "created_at": datetime.now().isoformat(timespec="seconds"),
+        "source_dir": os.path.abspath(source_dir),
+        "files": sorted(entries, key=lambda entry: entry["original_name"]),
+    }
+    manifest_path = os.path.join(session_folder, MANIFEST_FILE_NAME)
+    try:
+        os.makedirs(session_folder, exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as handle:
+            json.dump(manifest, handle, indent=2, ensure_ascii=False)
+            handle.write("\n")
+    except Exception as exc:
+        return str(exc)
+    return None
 
 
 def get_env_int(name: str, default: int) -> int:
     """Get integer from environment variable with fallback to default.
+
+    Invalid values fall back to the default with a warning, so a typo in
+    the environment never silently changes behavior.
 
     Args:
         name: Environment variable name
@@ -46,14 +94,24 @@ def get_env_int(name: str, default: int) -> int:
     Returns:
         Integer value from environment or default
     """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
     try:
-        return int(os.environ.get(name, default))
-    except Exception:
+        return int(raw)
+    except ValueError:
+        print(
+            f"WARNING: ignoring invalid {name}={raw!r}; using default {default}",
+            file=sys.stderr,
+        )
         return default
 
 
 def get_env_float(name: str, default: float) -> float:
     """Get float from environment variable with fallback to default.
+
+    Invalid values fall back to the default with a warning, so a typo in
+    the environment never silently changes behavior.
 
     Args:
         name: Environment variable name
@@ -62,9 +120,16 @@ def get_env_float(name: str, default: float) -> float:
     Returns:
         Float value from environment or default
     """
+    raw = os.environ.get(name)
+    if raw is None:
+        return default
     try:
-        return float(os.environ.get(name, default))
-    except Exception:
+        return float(raw)
+    except ValueError:
+        print(
+            f"WARNING: ignoring invalid {name}={raw!r}; using default {default}",
+            file=sys.stderr,
+        )
         return default
 
 
@@ -378,6 +443,9 @@ def backfill_all_symlinks(
     Returns:
         Tuple of (symlinks_created, symlink_errors).
     """
+    if not os.path.isdir(dst_dir):
+        return (0, 0)
+
     all_dir = os.path.join(dst_dir, "_all")
     reserved_link_names = {
         entry for entry in os.listdir(all_dir)
@@ -551,21 +619,28 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
     folder_pattern = config.get("folder_pattern", DEFAULT_FOLDER_PATTERN)
     all_dir = os.path.join(config["dst_dir"], "_all")
 
-    # Calculate total files across all batches for progress tracking
-    total_files_to_process = sum(len(cluster) for batch in batches
-                                for cluster in cluster_prompts(batch, threshold=config["sim_thresh"], cluster_size_limit=config["cluster_size_limit"]))
-
-    # Initialize total progress bar if tqdm is available
-    if tqdm and total_files_to_process > 2:
-        total_bar = tqdm(
-            total=total_files_to_process,
-            desc="Processing files" if not config["dry_run"] else "Previewing files",
-            ncols=120,  # Wider progress bar
-            bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} files [{elapsed}<{remaining}, {rate_fmt}]',
-            dynamic_ncols=True  # Allow dynamic resizing
+    # A dry run prints the plan itself; a progress bar would only add noise.
+    total_bar = None
+    if tqdm and not config["dry_run"]:
+        total_files_to_process = sum(
+            len(cluster) for batch in batches
+            for cluster in cluster_prompts(
+                batch,
+                threshold=config["sim_thresh"],
+                cluster_size_limit=config["cluster_size_limit"],
+            )
         )
-    else:
-        total_bar = None
+        if total_files_to_process > 2:
+            total_bar = tqdm(
+                total=total_files_to_process,
+                desc="Processing files",
+                ncols=120,  # Wider progress bar
+                bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} files [{elapsed}<{remaining}, {rate_fmt}]',
+                dynamic_ncols=True  # Allow dynamic resizing
+            )
+
+    if config["dry_run"] and batches:
+        print("Dry run - planned sessions (no files will be moved):\n")
 
     for batch_idx, batch in enumerate(batches):
         clusters = cluster_prompts(
@@ -607,6 +682,9 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                 "base_slug": base_slug,
                 "count": len(cluster),
                 "count_padded": f"{len(cluster):03d}",
+                # Global counter: unlike cluster_index it never repeats
+                # within a run, so default folder names stay unambiguous.
+                "session_index": session_count + 1,
                 "cluster_index": cluster_idx + 1,
                 "batch_index": batch_idx + 1,
                 "checksum": checksum,
@@ -630,24 +708,69 @@ def process_clusters(batches: List[List[Tuple[str, datetime, str]]], config: Dic
                 date_folder, folder_name
             )
 
+            if config["dry_run"]:
+                relative_session = os.path.relpath(
+                    session_folder, os.path.abspath(config["dst_dir"])
+                )
+                file_word = "file" if len(cluster) == 1 else "files"
+                print(f"  {relative_session}  ({len(cluster)} {file_word})")
+                for original_name, _, _ in cluster[:PLAN_SAMPLE_LIMIT]:
+                    print(f"    {original_name}")
+                overflow = len(cluster) - PLAN_SAMPLE_LIMIT
+                if overflow > 0:
+                    print(f"    ... and {overflow} more")
+
             # Print session info if debug mode is enabled
             if config.get("debug", False):
                 print(f"\nSession {session_count+1}: {session_folder}")
 
             file_ops = []
             reserved_session_names: set[str] = set()
-            for f, _, _ in cluster:
+            source_metadata: Dict[str, Dict[str, str]] = {}
+            for f, file_mtime, file_prompt in cluster:
                 src = os.path.join(config["src_dir"], f)
                 extension = os.path.splitext(f)[1].lower()
-                hashed_name = f"{compute_file_md5(src)}{extension}"
-                target_name = find_unique_file_name(
-                    session_folder,
-                    hashed_name,
-                    reserved_session_names,
-                )
-                reserved_session_names.add(target_name)
+                if config["dry_run"]:
+                    # Hashing reads every byte of every file; a preview
+                    # should stay cheap, so show a placeholder instead.
+                    target_name = f"<md5>{extension}"
+                else:
+                    hashed_name = f"{compute_file_md5(src)}{extension}"
+                    target_name = find_unique_file_name(
+                        session_folder,
+                        hashed_name,
+                        reserved_session_names,
+                    )
+                    reserved_session_names.add(target_name)
                 dst = os.path.join(session_folder, target_name)
+                source_metadata[src] = {
+                    "original_name": f,
+                    "prompt": file_prompt,
+                    "modified_at": file_mtime.isoformat(timespec="seconds"),
+                }
                 file_ops.append((src, dst, session_folder, config["dry_run"]))
+
+            if not config["dry_run"]:
+                # Persist mappings before any moves so an interrupt (Ctrl-C,
+                # kill) cannot leave renamed files without a recovery record.
+                manifest_entries = []
+                for src, dst, _, _ in file_ops:
+                    entry = dict(source_metadata[src])
+                    entry["stored_name"] = os.path.basename(dst)
+                    manifest_entries.append(entry)
+                manifest_error = write_session_manifest(
+                    session_folder,
+                    config["src_dir"],
+                    manifest_entries,
+                )
+                if manifest_error:
+                    move_errors += len(file_ops)
+                    print(
+                        f"    ERROR: Could not write manifest in {session_folder}: {manifest_error}"
+                    )
+                    session_count += 1
+                    total_files += len(cluster)
+                    continue
 
             results = []
 
@@ -717,3 +840,5 @@ def print_summary(session_count: int, total_files: int, move_errors: int, dry_ru
     print(f"Total files {'to be moved' if dry_run else 'moved'}: {total_files}")
     if move_errors:
         print(f"Total errors during file move: {move_errors}")
+    if dry_run:
+        print("This was a dry run; nothing was moved. Add --move (or -x) to apply.")

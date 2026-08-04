@@ -175,6 +175,24 @@ class TestCLI(unittest.TestCase):
             with self.assertRaises(SystemExit):
                 parse_config()
 
+    def test_parse_config_move_long_flag(self):
+        """--move behaves exactly like -x."""
+        with patch('sys.argv', ['script.py', '--move']):
+            config = parse_config()
+            self.assertFalse(config["dry_run"])
+
+    def test_parse_config_explicit_dry_run_flag(self):
+        """--dry-run states the default explicitly."""
+        with patch('sys.argv', ['script.py', '--dry-run']):
+            config = parse_config()
+            self.assertTrue(config["dry_run"])
+
+    def test_parse_config_move_and_dry_run_conflict(self):
+        """--move and --dry-run together must be rejected."""
+        with patch('sys.argv', ['script.py', '--move', '--dry-run']):
+            with self.assertRaises(SystemExit):
+                parse_config()
+
     def test_parse_config_environment_variables(self):
         """Test configuration parsing with environment variables."""
         env_vars = {
@@ -439,6 +457,52 @@ class TestCLI(unittest.TestCase):
             mock_exit.assert_called_with(0)
 
         self.assertFalse(os.path.lexists(broken_link))
+
+    def test_maintenance_runs_when_source_directory_is_missing(self):
+        """Link maintenance only needs the destination tree."""
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        all_dir = os.path.join(dst_dir, "_all")
+        os.makedirs(all_dir, exist_ok=True)
+        broken_link = os.path.join(all_dir, "missing.png")
+        os.symlink(os.path.join(dst_dir, "missing.png"), broken_link)
+
+        with patch('sys.argv', [
+            'script.py',
+            '/non/existent/source',
+            dst_dir,
+            '--cleanup-broken-links',
+            '-x',
+        ]), patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        self.assertFalse(os.path.lexists(broken_link))
+
+    def test_maintenance_flags_do_not_organize_source_images(self):
+        """Link maintenance must never turn into a bulk file move."""
+        src_dir = os.path.join(self.temp_dir, "src")
+        dst_dir = os.path.join(self.temp_dir, "dst")
+        all_dir = os.path.join(dst_dir, "_all")
+        os.makedirs(src_dir, exist_ok=True)
+        os.makedirs(all_dir, exist_ok=True)
+
+        image_path = os.path.join(src_dir, "unmoved_image.png")
+        with open(image_path, 'w') as handle:
+            handle.write("test content")
+
+        broken_link = os.path.join(all_dir, "missing.png")
+        os.symlink(os.path.join(dst_dir, "missing.png"), broken_link)
+
+        with patch('sys.argv', ['script.py', src_dir, dst_dir, '--cleanup-broken-links', '-x']), \
+             patch('sys.exit') as mock_exit:
+            main()
+            mock_exit.assert_called_with(0)
+
+        # Maintenance ran...
+        self.assertFalse(os.path.lexists(broken_link))
+        # ...but the source image stayed exactly where it was.
+        self.assertTrue(os.path.exists(image_path))
+        self.assertEqual(os.listdir(dst_dir), ["_all"])
 
     def test_main_function_backfills_all_links_without_images(self):
         """Backfill should run against existing sessions even without new inputs."""

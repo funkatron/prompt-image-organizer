@@ -1,11 +1,13 @@
 """Prompt Image Organizer - Organize AI-generated images by their prompts and creation time."""
 
-__version__ = "0.1.2"
+__version__ = "0.2.0"
 
 from .core import (
     backfill_all_symlinks,
     DEFAULT_FOLDER_PATTERN,
+    MANIFEST_FILE_NAME,
     cleanup_broken_symlinks,
+    write_session_manifest,
     compute_file_md5,
     get_env_int,
     get_env_float,
@@ -26,8 +28,10 @@ from .cli import parse_config, print_help, main
 
 __all__ = [
     "DEFAULT_FOLDER_PATTERN",
+    "MANIFEST_FILE_NAME",
     "cleanup_broken_symlinks",
     "backfill_all_symlinks",
+    "write_session_manifest",
     "compute_file_md5",
     "get_env_int",
     "get_env_float",
